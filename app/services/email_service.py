@@ -16,7 +16,7 @@ class EmailService:
         self.sender_email = settings.smtp_email
         self.sender_password = settings.smtp_password
 
-    async def send_verification_email(self, to_email: str, token: str, app_name: str = "Plataforma de Préstamos") -> bool:
+    async def send_verification_email(self, to_email: str, token: str, app_name: str = "Kashap") -> bool:
         """Send email verification link to user."""
         verification_link = f"{settings.app_url}/verify-email?token={token}"
 
@@ -41,7 +41,7 @@ class EmailService:
             html_content=html_template.format(app_name=app_name, link=verification_link)
         )
 
-    async def send_password_reset_email(self, to_email: str, token: str, app_name: str = "Plataforma de Préstamos") -> bool:
+    async def send_password_reset_email(self, to_email: str, token: str, app_name: str = "Kashap") -> bool:
         """Send password reset link to user."""
         reset_link = f"{settings.app_url}/reset-password?token={token}"
 

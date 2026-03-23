@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import os
 import re
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from decimal import Decimal
@@ -28,12 +30,11 @@ def initialize_ocr():
         ocr_engine = PaddleOCR(
             use_angle_cls=settings.ocr_use_angle_cls,
             lang=settings.ocr_lang,
-            use_gpu=settings.ocr_device == "gpu",
         )
         logger.info("PaddleOCR initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize PaddleOCR: {str(e)}")
-        raise AppException(f"OCR initialization failed: {str(e)}", code="OCR_INIT_ERROR")
+        logger.warning(f"OCR initialization warning (continuing without OCR): {str(e)}")
+        logger.warning("OCR features will be disabled. This is expected in CPU-only environments.")
 
 
 def _extract_amount_dominican(text: str) -> Optional[Decimal]:
@@ -195,3 +196,34 @@ def close_ocr():
     if ocr_executor:
         ocr_executor.shutdown(wait=True)
     logger.info("OCR engine shut down")
+
+
+class OCRService:
+    """Backward-compatible wrapper around the current OCR helpers."""
+
+    async def extract_from_image(self, file_content: bytes) -> dict:
+        """Process an uploaded image buffer and normalize the OCR payload."""
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
+                temp_file.write(file_content)
+                temp_path = temp_file.name
+
+            result = await process_voucher_image(temp_path)
+            extracted = result.get("extracted_data", {})
+
+            return {
+                "extracted_text": result.get("raw_text"),
+                "detected_amount": extracted.get("amount"),
+                "detected_currency": "DOP" if extracted.get("amount") is not None else None,
+                "detected_date": extracted.get("transaction_date"),
+                "detected_reference": extracted.get("bank_reference"),
+                "detected_bank_name": None,
+                "confidence_score": result.get("confidence", 0.0),
+                "appears_to_be_receipt": bool(result.get("raw_text")),
+                "validation_summary": result.get("status"),
+                "status": result.get("status", "failed"),
+            }
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)

@@ -16,6 +16,7 @@ router = APIRouter(prefix="/loan-applications", tags=["loan-applications"])
 
 class LoanApplicationCreateRequest(BaseModel):
     """Create loan application request."""
+    customer_id: str | None = None
     requested_amount: Decimal = Field(..., gt=0)
     requested_interest_rate: Decimal = Field(..., ge=0)
     requested_installments_count: int = Field(..., gt=0)
@@ -40,8 +41,9 @@ async def create_loan_application(
     """Create new loan application."""
     try:
         service = LoanApplicationService(session)
+        customer_id = request.customer_id or str(current_user.id)
         result = await service.create_application(
-            customer_id=current_user.id,
+            customer_id=customer_id,
             lender_id=current_user.lender_id,
             requested_amount=request.requested_amount,
             requested_interest_rate=request.requested_interest_rate,

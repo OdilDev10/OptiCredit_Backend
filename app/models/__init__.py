@@ -3,7 +3,7 @@
 from app.models.base_model import BaseModel
 from app.models.lender import Lender, LenderInvitation, LenderBankAccount
 from app.models.user import User
-from app.models.customer import Customer, CustomerLenderLink, CustomerIdentityDocument
+from app.models.customer import Customer
 from app.models.auth import EmailVerification, PasswordReset, OTP
 from app.models.loan_application import LoanApplication
 from app.models.loan import Loan, Disbursement, Installment
@@ -16,8 +16,6 @@ __all__ = [
     "LenderBankAccount",
     "User",
     "Customer",
-    "CustomerLenderLink",
-    "CustomerIdentityDocument",
     "EmailVerification",
     "PasswordReset",
     "OTP",

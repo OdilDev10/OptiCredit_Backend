@@ -197,9 +197,12 @@ class LoanApplicationService:
         if application.lender_id != lender_id:
             raise ForbiddenException("Not authorized to view this application")
 
+        customer = await self.customer_repo.get_or_404(application.customer_id)
+
         return {
             "application_id": str(application.id),
             "customer_id": str(application.customer_id),
+            "customer_name": f"{customer.first_name} {customer.last_name}".strip(),
             "requested_amount": float(application.requested_amount),
             "requested_interest_rate": float(application.requested_interest_rate),
             "requested_installments_count": application.requested_installments_count,
@@ -229,16 +232,25 @@ class LoanApplicationService:
         applications = await self.repo.get_by_lender(lender_id, status_enum)
         applications = applications[:limit]
 
-        return {
-            "count": len(applications),
-            "applications": [
+        items = []
+        for app in applications:
+            customer = await self.customer_repo.get_or_404(app.customer_id)
+            items.append(
                 {
                     "application_id": str(app.id),
                     "customer_id": str(app.customer_id),
+                    "customer_name": f"{customer.first_name} {customer.last_name}".strip(),
                     "requested_amount": float(app.requested_amount),
+                    "requested_interest_rate": float(app.requested_interest_rate),
+                    "requested_installments_count": app.requested_installments_count,
+                    "requested_frequency": app.requested_frequency,
+                    "purpose": app.purpose,
                     "status": app.status.value,
                     "created_at": app.created_at.isoformat(),
                 }
-                for app in applications
-            ],
+            )
+
+        return {
+            "count": len(applications),
+            "applications": items,
         }

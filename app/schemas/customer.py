@@ -1,78 +1,91 @@
-"""Customer schemas - request/response models."""
+"""Schemas for customer CRUD operations."""
 
-from pydantic import BaseModel, Field, EmailStr
-from decimal import Decimal
 from datetime import date, datetime
-from typing import Optional
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field
+
+from app.core.enums import CustomerStatus
+
+
+class CustomerBase(BaseModel):
+    """Shared customer fields."""
+
+    first_name: str = Field(..., min_length=1, max_length=100)
+    last_name: str = Field(..., min_length=1, max_length=100)
+    document_type: str = Field(..., min_length=1, max_length=50)
+    document_number: str = Field(..., min_length=1, max_length=50)
+    birth_date: date | None = None
+    gender: str | None = Field(default=None, max_length=20)
+    phone: str = Field(..., min_length=1, max_length=20)
+    email: EmailStr
+    address_line: str | None = Field(default=None, max_length=255)
+    city: str | None = Field(default=None, max_length=100)
+    province: str | None = Field(default=None, max_length=100)
+    country: str | None = Field(default="DO", max_length=100)
+    credit_limit: Decimal | None = Field(default=None, ge=0)
 
 
 class CustomerCreate(BaseModel):
-    """Create customer request."""
-    first_name: str = Field(..., min_length=2, max_length=100)
-    last_name: str = Field(..., min_length=2, max_length=100)
+    """Payload for creating a customer from Flutter."""
+
+    full_name: str = Field(..., min_length=2, max_length=200)
+    document_type: str = Field(..., min_length=1, max_length=50)
+    document_number: str = Field(..., min_length=1, max_length=50)
+    phone: str = Field(..., min_length=1, max_length=20)
     email: EmailStr
-    phone: str = Field(..., min_length=8, max_length=20)
-    document_type: str
-    document_number: str = Field(..., min_length=5, max_length=50)
-    birth_date: Optional[date] = None
-    gender: Optional[str] = None
-    address_line: Optional[str] = None
-    city: Optional[str] = None
-    province: Optional[str] = None
-    country: Optional[str] = None
+    credit_limit: Decimal | None = Field(default=None, ge=0)
 
 
 class CustomerUpdate(BaseModel):
-    """Update customer request."""
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    phone: Optional[str] = None
-    birth_date: Optional[date] = None
-    gender: Optional[str] = None
-    address_line: Optional[str] = None
-    city: Optional[str] = None
-    province: Optional[str] = None
+    """Payload for partially updating a customer."""
+
+    first_name: str | None = Field(default=None, min_length=1, max_length=100)
+    last_name: str | None = Field(default=None, min_length=1, max_length=100)
+    document_type: str | None = Field(default=None, min_length=1, max_length=50)
+    document_number: str | None = Field(default=None, min_length=1, max_length=50)
+    birth_date: date | None = None
+    gender: str | None = Field(default=None, max_length=20)
+    phone: str | None = Field(default=None, min_length=1, max_length=20)
+    email: EmailStr | None = None
+    address_line: str | None = Field(default=None, max_length=255)
+    city: str | None = Field(default=None, max_length=100)
+    province: str | None = Field(default=None, max_length=100)
+    country: str | None = Field(default=None, max_length=100)
+    status: CustomerStatus | None = None
+    credit_limit: Decimal | None = Field(default=None, ge=0)
 
 
-class CustomerRead(BaseModel):
-    """Customer details response."""
-    customer_id: str
+class IdentityDocumentUpload(BaseModel):
+    """Placeholder schema for future KYC uploads."""
+
+    document_kind: str
+    file_name: str
+    mime_type: str
+
+
+class CustomerRead(CustomerBase):
+    """Serialized customer representation."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
     lender_id: str
-    first_name: str
-    last_name: str
-    email: str
-    phone: str
-    document_type: str
-    document_number: str
-    birth_date: Optional[date]
-    gender: Optional[str]
-    address_line: Optional[str]
-    city: Optional[str]
-    province: Optional[str]
-    country: Optional[str]
-    status: str
-    credit_limit: Optional[Decimal]
+    user_id: str | None = None
+    status: CustomerStatus
     created_at: datetime
+    updated_at: datetime
+
+    @computed_field
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.last_name}".strip()
 
 
-class CustomerListItem(BaseModel):
-    """Customer list item."""
-    customer_id: str
-    first_name: str
-    last_name: str
-    email: str
-    status: str
-    created_at: datetime
+class PaginatedCustomerResponse(BaseModel):
+    """Paginated response envelope for customers."""
 
-
-class CustomerSummary(BaseModel):
-    """Customer summary with loan statistics."""
-    customer_id: str
-    first_name: str
-    last_name: str
-    email: str
-    status: str
-    credit_limit: Optional[Decimal]
-    active_loans_count: int
-    total_debt: Decimal
-    overdue_installments_count: int
+    items: list[CustomerRead]
+    total: int
+    skip: int
+    limit: int

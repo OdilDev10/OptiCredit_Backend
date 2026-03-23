@@ -1,11 +1,10 @@
 """Service for customer business logic - registration, linking, KYC."""
 
-from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import CustomerStatus, DocumentStatus
+from app.core.enums import CustomerStatus
 from app.core.exceptions import ConflictException, ValidationException, NotFoundException
 from app.models.customer import Customer
 from app.repositories.customer_repo import CustomerRepository
@@ -17,6 +16,44 @@ class CustomerService:
     def __init__(self, session: AsyncSession):
         self.session = session
         self.customer_repo = CustomerRepository(session)
+
+    async def create_customer(
+        self,
+        lender_id: UUID,
+        first_name: str,
+        last_name: str,
+        document_type: str,
+        document_number: str,
+        phone: str,
+        email: str,
+        credit_limit: float | None = None,
+    ) -> Customer:
+        """Create a new customer within a lender scope."""
+        email = email.lower().strip()
+        document_number = document_number.strip()
+
+        if len(first_name.strip()) < 2:
+            raise ValidationException("First name must be at least 2 characters")
+        if len(last_name.strip()) < 2:
+            raise ValidationException("Last name must be at least 2 characters")
+        if await self.customer_repo.email_exists(email):
+            raise ConflictException("Email already in use by another customer")
+        if await self.customer_repo.document_exists(document_number):
+            raise ConflictException("Document number already in use")
+
+        customer = await self.customer_repo.create({
+            "lender_id": lender_id,
+            "first_name": first_name.strip(),
+            "last_name": last_name.strip(),
+            "document_type": document_type.strip(),
+            "document_number": document_number,
+            "phone": phone.strip(),
+            "email": email,
+            "status": CustomerStatus.ACTIVE,
+            "credit_limit": credit_limit,
+        })
+        await self.session.flush()
+        return customer
 
     async def get_customer(self, customer_id: UUID) -> Customer:
         """Get customer by ID."""

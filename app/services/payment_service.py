@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.payment_repo import PaymentRepository, VoucherRepository, OcrResultRepository, PaymentMatchRepository
 from app.repositories.loan_repo import InstallmentRepository, LoanRepository
+from app.repositories.customer_repo import CustomerRepository
 from app.models.payment import Payment, PaymentStatus, PaymentMethod, PaymentSource, Voucher, OcrResult, PaymentMatch
 from app.models.loan import Installment, InstallmentStatus
 from app.core.exceptions import ValidationException, NotFoundException, ForbiddenException
@@ -23,6 +24,7 @@ class PaymentService:
         self.match_repo = PaymentMatchRepository(session)
         self.installment_repo = InstallmentRepository(session)
         self.loan_repo = LoanRepository(session)
+        self.customer_repo = CustomerRepository(session)
 
     async def submit_payment(
         self,
@@ -236,16 +238,22 @@ class PaymentService:
         payments = await self.payment_repo.get_pending_review(lender_id)
         payments = payments[:limit]
 
+        items = []
+        for payment in payments:
+            customer = await self.customer_repo.get_or_404(payment.customer_id)
+            items.append(
+                {
+                    "payment_id": str(payment.id),
+                    "loan_id": str(payment.loan_id),
+                    "customer_id": str(payment.customer_id),
+                    "customer_name": f"{customer.first_name} {customer.last_name}".strip(),
+                    "amount": float(payment.amount),
+                    "status": payment.status.value,
+                    "submitted_at": payment.created_at.isoformat(),
+                }
+            )
+
         return {
             "count": len(payments),
-            "payments": [
-                {
-                    "payment_id": str(p.id),
-                    "loan_id": str(p.loan_id),
-                    "customer_id": str(p.customer_id),
-                    "amount": float(p.amount),
-                    "submitted_at": p.created_at.isoformat(),
-                }
-                for p in payments
-            ],
+            "payments": items,
         }

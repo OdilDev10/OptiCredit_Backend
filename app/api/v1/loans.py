@@ -60,6 +60,21 @@ async def create_loan(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
+@router.get("/")
+async def list_loans(
+    status: str | None = None,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """List loans for the authenticated lender."""
+    try:
+        service = LoanService(session)
+        result = await service.list_loans(current_user.lender_id, status)
+        return result
+    except AppException as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
 @router.get("/{loan_id}")
 async def get_loan(
     loan_id: str,

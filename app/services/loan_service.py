@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.loan_repo import LoanRepository, InstallmentRepository, DisbursementRepository
 from app.repositories.loan_application_repo import LoanApplicationRepository
+from app.repositories.customer_repo import CustomerRepository
 from app.models.loan import Loan, Installment, Disbursement, LoanStatus, InstallmentStatus, DisbursementStatus
 from app.models.loan_application import LoanApplicationStatus
 from app.core.exceptions import ValidationException, NotFoundException, ForbiddenException
@@ -22,6 +23,7 @@ class LoanService:
         self.installment_repo = InstallmentRepository(session)
         self.disbursement_repo = DisbursementRepository(session)
         self.application_repo = LoanApplicationRepository(session)
+        self.customer_repo = CustomerRepository(session)
 
     async def create_loan_from_application(
         self,
@@ -204,14 +206,19 @@ class LoanService:
             raise ForbiddenException("Not authorized to view this loan")
 
         installments = await self.installment_repo.get_by_loan(loan_id)
+        customer = await self.customer_repo.get_or_404(loan.customer_id)
+        balance = loan.total_amount - sum(inst.amount_paid for inst in installments)
 
         return {
             "loan_id": str(loan.id),
             "loan_number": loan.loan_number,
+            "customer_id": str(loan.customer_id),
+            "customer_name": f"{customer.first_name} {customer.last_name}".strip(),
             "principal": float(loan.principal_amount),
             "interest_rate": float(loan.interest_rate),
             "total_interest": float(loan.total_interest_amount),
             "total_amount": float(loan.total_amount),
+            "balance": float(balance),
             "frequency": loan.frequency,
             "status": loan.status.value,
             "first_due_date": loan.first_due_date.isoformat(),
@@ -227,6 +234,36 @@ class LoanService:
                 for inst in installments
             ],
             "created_at": loan.created_at.isoformat(),
+        }
+
+    async def list_loans(self, lender_id: str, status: str | None = None) -> dict:
+        """List loans for a lender with customer summary."""
+        status_enum = LoanStatus(status) if status else None
+        loans = await self.loan_repo.get_by_lender(lender_id, status_enum)
+
+        items = []
+        for loan in loans:
+            installments = await self.installment_repo.get_by_loan(loan.id)
+            customer = await self.customer_repo.get_or_404(loan.customer_id)
+            balance = loan.total_amount - sum(inst.amount_paid for inst in installments)
+            items.append(
+                {
+                    "loan_id": str(loan.id),
+                    "loan_number": loan.loan_number,
+                    "customer_id": str(loan.customer_id),
+                    "customer_name": f"{customer.first_name} {customer.last_name}".strip(),
+                    "principal": float(loan.principal_amount),
+                    "interest_rate": float(loan.interest_rate),
+                    "total_amount": float(loan.total_amount),
+                    "balance": float(balance),
+                    "status": loan.status.value,
+                    "created_at": loan.created_at.isoformat(),
+                }
+            )
+
+        return {
+            "count": len(items),
+            "loans": items,
         }
 
     def _generate_loan_number(self, lender_id: str) -> str:
