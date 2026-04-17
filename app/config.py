@@ -1,3 +1,4 @@
+import os
 from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -6,11 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        case_sensitive=False,
-        extra="ignore",
-    )
+    model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")
 
     # Database
     database_url: str = "postgresql+asyncpg://prestamos_user:prestamos_pass@localhost:5432/prestamos_db"
@@ -51,6 +48,7 @@ class Settings(BaseSettings):
 
     # OCR
     ocr_enabled: bool = True
+    ocr_required: bool = False
     ocr_device: Literal["cpu", "gpu"] = "cpu"
     ocr_use_angle_cls: bool = True
     ocr_lang: str = "es"
@@ -65,4 +63,17 @@ class Settings(BaseSettings):
 
 
 # Global settings instance
-settings = Settings()
+def _resolve_env_files() -> tuple[str, ...]:
+    """Pick env files based on runtime environment and optional override."""
+    explicit_env_file = os.getenv("ENV_FILE")
+    if explicit_env_file:
+        return (explicit_env_file,)
+
+    environment = os.getenv("ENVIRONMENT", "development").lower()
+    if environment == "production":
+        return (".env.production", ".env")
+
+    return (".env.local", ".env")
+
+
+settings = Settings(_env_file=_resolve_env_files())

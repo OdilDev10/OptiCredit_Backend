@@ -4,7 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, desc
 from typing import Optional
 from app.repositories.base import BaseRepository
-from app.models.loan import Loan, Installment, Disbursement, LoanStatus, InstallmentStatus
+from app.models.loan import (
+    Loan,
+    Installment,
+    Disbursement,
+    LoanStatus,
+    InstallmentStatus,
+)
 
 
 class LoanRepository(BaseRepository[Loan]):
@@ -13,7 +19,9 @@ class LoanRepository(BaseRepository[Loan]):
     def __init__(self, session: AsyncSession):
         super().__init__(session, Loan)
 
-    async def get_by_lender(self, lender_id: str, status: Optional[LoanStatus] = None) -> list[Loan]:
+    async def get_by_lender(
+        self, lender_id: str, status: Optional[LoanStatus] = None
+    ) -> list[Loan]:
         """Get all loans for a lender."""
         query = select(Loan).where(Loan.lender_id == lender_id)
         if status:
@@ -22,14 +30,20 @@ class LoanRepository(BaseRepository[Loan]):
         result = await self.session.execute(query)
         return result.scalars().all()
 
-    async def get_by_customer_and_lender(self, customer_id: str, lender_id: str) -> list[Loan]:
+    async def get_by_customer_and_lender(
+        self, customer_id: str, lender_id: str
+    ) -> list[Loan]:
         """Get all loans for a customer from a specific lender."""
-        query = select(Loan).where(
-            and_(
-                Loan.customer_id == customer_id,
-                Loan.lender_id == lender_id,
+        query = (
+            select(Loan)
+            .where(
+                and_(
+                    Loan.customer_id == customer_id,
+                    Loan.lender_id == lender_id,
+                )
             )
-        ).order_by(desc(Loan.created_at))
+            .order_by(desc(Loan.created_at))
+        )
         result = await self.session.execute(query)
         return result.scalars().all()
 
@@ -57,6 +71,16 @@ class LoanRepository(BaseRepository[Loan]):
         result = await self.session.execute(query)
         return len(result.scalars().all())
 
+    async def get_by_customer(self, customer_id: str) -> list[Loan]:
+        """Get all loans for a customer."""
+        query = (
+            select(Loan)
+            .where(Loan.customer_id == customer_id)
+            .order_by(desc(Loan.created_at))
+        )
+        result = await self.session.execute(query)
+        return result.scalars().all()
+
 
 class InstallmentRepository(BaseRepository[Installment]):
     """Repository for installment operations."""
@@ -66,22 +90,38 @@ class InstallmentRepository(BaseRepository[Installment]):
 
     async def get_by_loan(self, loan_id: str) -> list[Installment]:
         """Get all installments for a loan."""
-        query = select(Installment).where(Installment.loan_id == loan_id).order_by(Installment.installment_number)
+        query = (
+            select(Installment)
+            .where(Installment.loan_id == loan_id)
+            .order_by(Installment.installment_number)
+        )
         result = await self.session.execute(query)
         return result.scalars().all()
 
     async def get_pending_by_loan(self, loan_id: str) -> list[Installment]:
         """Get unpaid installments for a loan."""
-        query = select(Installment).where(
-            and_(
-                Installment.loan_id == loan_id,
-                Installment.status.in_([InstallmentStatus.PENDING, InstallmentStatus.PARTIAL, InstallmentStatus.OVERDUE]),
+        query = (
+            select(Installment)
+            .where(
+                and_(
+                    Installment.loan_id == loan_id,
+                    Installment.status.in_(
+                        [
+                            InstallmentStatus.PENDING,
+                            InstallmentStatus.PARTIAL,
+                            InstallmentStatus.OVERDUE,
+                        ]
+                    ),
+                )
             )
-        ).order_by(Installment.due_date)
+            .order_by(Installment.due_date)
+        )
         result = await self.session.execute(query)
         return result.scalars().all()
 
-    async def get_by_loan_and_number(self, loan_id: str, installment_number: int) -> Optional[Installment]:
+    async def get_by_loan_and_number(
+        self, loan_id: str, installment_number: int
+    ) -> Optional[Installment]:
         """Get specific installment by loan and number."""
         query = select(Installment).where(
             and_(
@@ -112,7 +152,11 @@ class DisbursementRepository(BaseRepository[Disbursement]):
 
     async def get_by_loan(self, loan_id: str) -> list[Disbursement]:
         """Get all disbursements for a loan."""
-        query = select(Disbursement).where(Disbursement.loan_id == loan_id).order_by(Disbursement.created_at)
+        query = (
+            select(Disbursement)
+            .where(Disbursement.loan_id == loan_id)
+            .order_by(Disbursement.created_at)
+        )
         result = await self.session.execute(query)
         return result.scalars().all()
 

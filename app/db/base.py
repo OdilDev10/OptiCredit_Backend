@@ -10,4 +10,5 @@ from app.models.customer import Customer  # noqa: E402,F401
 from app.models.loan_application import LoanApplication  # noqa: E402,F401
 from app.models.loan import Loan, Disbursement, Installment  # noqa: E402,F401
 from app.models.payment import Payment, Voucher, OcrResult, PaymentMatch  # noqa: E402,F401
-from app.models.subscription import Subscription  # noqa: E402,F401
+from app.models.subscription import Subscription, SubscriptionInvoice  # noqa: E402,F401
+from app.models.notification import Notification  # noqa: E402,F401

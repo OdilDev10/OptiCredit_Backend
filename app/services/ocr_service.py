@@ -8,9 +8,15 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Optional
 
-from paddleocr import PaddleOCR
+try:
+    from paddleocr import PaddleOCR
+except Exception as exc:  # pragma: no cover - import error path depends on host env
+    PaddleOCR = Any  # type: ignore[misc,assignment]
+    _paddle_import_error = exc
+else:
+    _paddle_import_error = None
 
 from app.config import settings
 from app.core.exceptions import AppException
@@ -25,16 +31,18 @@ ocr_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ocr_worker"
 def initialize_ocr():
     """Initialize PaddleOCR engine (called in app lifespan)."""
     global ocr_engine
-    try:
-        logger.info("Initializing PaddleOCR engine...")
-        ocr_engine = PaddleOCR(
-            use_angle_cls=settings.ocr_use_angle_cls,
-            lang=settings.ocr_lang,
+    if PaddleOCR is Any:
+        raise RuntimeError(
+            "OCR is required but PaddleOCR dependencies are not available. "
+            f"Import error: {_paddle_import_error}"
         )
-        logger.info("PaddleOCR initialized successfully")
-    except Exception as e:
-        logger.warning(f"OCR initialization warning (continuing without OCR): {str(e)}")
-        logger.warning("OCR features will be disabled. This is expected in CPU-only environments.")
+
+    logger.info("Initializing PaddleOCR engine...")
+    ocr_engine = PaddleOCR(
+        use_angle_cls=settings.ocr_use_angle_cls,
+        lang=settings.ocr_lang,
+    )
+    logger.info("PaddleOCR initialized successfully")
 
 
 def _extract_amount_dominican(text: str) -> Optional[Decimal]:

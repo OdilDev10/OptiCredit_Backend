@@ -4,7 +4,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, desc
 from typing import Optional
 from app.repositories.base import BaseRepository
-from app.models.payment import Payment, Voucher, OcrResult, PaymentMatch, PaymentStatus, VoucherStatus
+from app.models.payment import (
+    Payment,
+    Voucher,
+    OcrResult,
+    PaymentMatch,
+    PaymentStatus,
+    VoucherStatus,
+)
 
 
 class PaymentRepository(BaseRepository[Payment]):
@@ -13,7 +20,9 @@ class PaymentRepository(BaseRepository[Payment]):
     def __init__(self, session: AsyncSession):
         super().__init__(session, Payment)
 
-    async def get_by_lender(self, lender_id: str, status: Optional[PaymentStatus] = None) -> list[Payment]:
+    async def get_by_lender(
+        self, lender_id: str, status: Optional[PaymentStatus] = None
+    ) -> list[Payment]:
         """Get all payments for a lender."""
         query = select(Payment).where(Payment.lender_id == lender_id)
         if status:
@@ -24,11 +33,17 @@ class PaymentRepository(BaseRepository[Payment]):
 
     async def get_by_installment(self, installment_id: str) -> list[Payment]:
         """Get all payments for an installment."""
-        query = select(Payment).where(Payment.installment_id == installment_id).order_by(desc(Payment.created_at))
+        query = (
+            select(Payment)
+            .where(Payment.installment_id == installment_id)
+            .order_by(desc(Payment.created_at))
+        )
         result = await self.session.execute(query)
         return result.scalars().all()
 
-    async def get_by_loan(self, loan_id: str, status: Optional[PaymentStatus] = None) -> list[Payment]:
+    async def get_by_loan(
+        self, loan_id: str, status: Optional[PaymentStatus] = None
+    ) -> list[Payment]:
         """Get all payments for a loan."""
         query = select(Payment).where(Payment.loan_id == loan_id)
         if status:
@@ -39,12 +54,16 @@ class PaymentRepository(BaseRepository[Payment]):
 
     async def get_pending_review(self, lender_id: str) -> list[Payment]:
         """Get payments pending review for a lender."""
-        query = select(Payment).where(
-            and_(
-                Payment.lender_id == lender_id,
-                Payment.status == PaymentStatus.UNDER_REVIEW,
+        query = (
+            select(Payment)
+            .where(
+                and_(
+                    Payment.lender_id == lender_id,
+                    Payment.status == PaymentStatus.UNDER_REVIEW,
+                )
             )
-        ).order_by(Payment.created_at)
+            .order_by(Payment.created_at)
+        )
         result = await self.session.execute(query)
         return result.scalars().all()
 
@@ -59,6 +78,16 @@ class PaymentRepository(BaseRepository[Payment]):
         result = await self.session.execute(query)
         return len(result.scalars().all())
 
+    async def get_by_customer(self, customer_id: str) -> list[Payment]:
+        """Get all payments for a customer."""
+        query = (
+            select(Payment)
+            .where(Payment.customer_id == customer_id)
+            .order_by(desc(Payment.created_at))
+        )
+        result = await self.session.execute(query)
+        return result.scalars().all()
+
 
 class VoucherRepository(BaseRepository[Voucher]):
     """Repository for voucher operations."""
@@ -68,7 +97,11 @@ class VoucherRepository(BaseRepository[Voucher]):
 
     async def get_by_payment(self, payment_id: str) -> list[Voucher]:
         """Get all vouchers for a payment."""
-        query = select(Voucher).where(Voucher.payment_id == payment_id).order_by(desc(Voucher.created_at))
+        query = (
+            select(Voucher)
+            .where(Voucher.payment_id == payment_id)
+            .order_by(desc(Voucher.created_at))
+        )
         result = await self.session.execute(query)
         return result.scalars().all()
 
@@ -81,12 +114,16 @@ class VoucherRepository(BaseRepository[Voucher]):
     async def get_unprocessed(self, lender_id: str, limit: int = 10) -> list[Voucher]:
         """Get unprocessed vouchers for async OCR processing."""
         # Get vouchers that are uploaded but don't have OCR results yet
-        query = select(Voucher).where(
-            and_(
-                Voucher.status == VoucherStatus.UPLOADED,
-                ~Voucher.ocr_result.any(),
+        query = (
+            select(Voucher)
+            .where(
+                and_(
+                    Voucher.status == VoucherStatus.UPLOADED,
+                    ~Voucher.ocr_result.any(),
+                )
             )
-        ).limit(limit)
+            .limit(limit)
+        )
         result = await self.session.execute(query)
         return result.scalars().all()
 
@@ -118,6 +155,8 @@ class PaymentMatchRepository(BaseRepository[PaymentMatch]):
 
     async def get_for_installment(self, installment_id: str) -> Optional[PaymentMatch]:
         """Get match for installment (usually one-to-one or one-to-many)."""
-        query = select(PaymentMatch).where(PaymentMatch.installment_id == installment_id)
+        query = select(PaymentMatch).where(
+            PaymentMatch.installment_id == installment_id
+        )
         result = await self.session.execute(query)
         return result.scalar_one_or_none()

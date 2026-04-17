@@ -1,27 +1,40 @@
 """Security helpers for password hashing and JWT handling."""
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 from typing import Any
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from app.config import settings
 from app.core.exceptions import UnauthorizedException
 
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ALGORITHM = "HS256"
+
+
+def _normalize_password(password: str) -> bytes:
+    """Normalize password bytes to avoid bcrypt's 72-byte limitation errors."""
+    encoded = password.encode("utf-8")
+    if len(encoded) <= 72:
+        return encoded
+    return hashlib.sha256(encoded).hexdigest().encode("utf-8")
 
 
 def hash_password(password: str) -> str:
     """Hash a plain password using bcrypt."""
-    return pwd_context.hash(password)
+    normalized = _normalize_password(password)
+    return bcrypt.hashpw(normalized, bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
-    return pwd_context.verify(password, hashed_password)
+    try:
+        normalized = _normalize_password(password)
+        return bcrypt.checkpw(normalized, hashed_password.encode("utf-8"))
+    except ValueError:
+        return False
 
 
 def create_access_token(data: dict[str, Any]) -> str:

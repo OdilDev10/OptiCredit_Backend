@@ -7,10 +7,15 @@ from datetime import datetime
 from pathlib import Path
 
 import aiofiles
-from aioboto3 import Session
 
 from app.config import settings
 from app.core.exceptions import AppException, NotFoundException
+
+
+def _get_r2_session():
+    from aioboto3 import Session
+
+    return Session()
 
 
 class StorageService(ABC):
@@ -66,7 +71,9 @@ class LocalStorageService(StorageService):
         try:
             full_path = self.base_path / file_path
             if not full_path.exists():
-                raise NotFoundException(f"File not found: {file_path}", code="FILE_NOT_FOUND")
+                raise NotFoundException(
+                    f"File not found: {file_path}", code="FILE_NOT_FOUND"
+                )
             async with aiofiles.open(full_path, "rb") as f:
                 return await f.read()
         except IOError as e:
@@ -92,7 +99,7 @@ class R2StorageService(StorageService):
     """Store files on Cloudflare R2."""
 
     def __init__(self):
-        self.session = Session()
+        self._session = None
         self.bucket_name = settings.r2_bucket_name
 
         if not all(
@@ -104,6 +111,12 @@ class R2StorageService(StorageService):
             ]
         ):
             raise AppException("R2 configuration is incomplete", code="CONFIG_ERROR")
+
+    @property
+    def session(self):
+        if self._session is None:
+            self._session = _get_r2_session()
+        return self._session
 
     def _build_object_key(self, folder: str, file_name: str) -> str:
         """Build S3 object key with folder structure."""
@@ -142,7 +155,9 @@ class R2StorageService(StorageService):
                 aws_secret_access_key=settings.r2_secret_access_key,
                 region_name="us-east-1",
             ) as client:
-                response = await client.get_object(Bucket=self.bucket_name, Key=file_path)
+                response = await client.get_object(
+                    Bucket=self.bucket_name, Key=file_path
+                )
                 return await response["Body"].read()
         except Exception as e:
             raise AppException(f"R2 download failed: {str(e)}", code="STORAGE_ERROR")
@@ -178,7 +193,9 @@ class R2StorageService(StorageService):
                 )
                 return url
         except Exception as e:
-            raise AppException(f"Failed to generate presigned URL: {str(e)}", code="STORAGE_ERROR")
+            raise AppException(
+                f"Failed to generate presigned URL: {str(e)}", code="STORAGE_ERROR"
+            )
 
 
 def get_storage_service() -> StorageService:

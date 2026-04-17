@@ -1,5 +1,23 @@
 # 🚀 Quick Start — Kashap Backend
 
+## ✅ Flujo definitivo (Windows + uv + logs + OCR obligatorio)
+
+Desde `backend/`:
+
+```powershell
+.\scripts\dev.ps1
+```
+
+Este comando único:
+- valida puerto `8000`,
+- corre `uv sync --dev`,
+- valida OCR obligatorio (`paddle`, `paddleocr`, `chardet`),
+- levanta FastAPI con `--access-log --log-level debug`.
+
+Si falla OCR, el backend no arranca (comportamiento esperado).
+
+---
+
 ## ⚡ Opción A: Docker (Recomendado — 1 comando)
 
 ```bash

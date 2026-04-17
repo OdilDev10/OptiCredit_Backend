@@ -8,6 +8,8 @@ from app.models.auth import EmailVerification, PasswordReset, OTP
 from app.models.loan_application import LoanApplication
 from app.models.loan import Loan, Disbursement, Installment
 from app.models.payment import Payment, Voucher, OcrResult, PaymentMatch
+from app.models.subscription import Subscription, SubscriptionInvoice
+from app.models.notification import Notification
 
 __all__ = [
     "BaseModel",
@@ -27,4 +29,7 @@ __all__ = [
     "Voucher",
     "OcrResult",
     "PaymentMatch",
+    "Subscription",
+    "SubscriptionInvoice",
+    "Notification",
 ]
