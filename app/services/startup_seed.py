@@ -139,7 +139,7 @@ LENDER_ACCOUNTS: dict[str, list[dict[str, Any]]] = {
         {
             "bank_name": "Banco Popular Dominicano",
             "account_type": "checking",
-            "account_number_masked": "*********1204",
+            "account_number_masked": "8870011204",
             "account_holder_name": "OptiCredit Demo SRL",
             "currency": "DOP",
             "is_primary": True,
@@ -148,7 +148,7 @@ LENDER_ACCOUNTS: dict[str, list[dict[str, Any]]] = {
         {
             "bank_name": "Banco BHD",
             "account_type": "savings",
-            "account_number_masked": "*********4458",
+            "account_number_masked": "1120094458",
             "account_holder_name": "OptiCredit Demo SRL",
             "currency": "DOP",
             "is_primary": False,
@@ -159,7 +159,7 @@ LENDER_ACCOUNTS: dict[str, list[dict[str, Any]]] = {
         {
             "bank_name": "Banreservas",
             "account_type": "checking",
-            "account_number_masked": "*********8831",
+            "account_number_masked": "7785508831",
             "account_holder_name": "MicroFinanciera Dominica SRL",
             "currency": "DOP",
             "is_primary": True,
@@ -341,6 +341,41 @@ async def _ensure_customer_links(session, customer: Customer, lender_map: dict[s
 
 async def _upsert_lender_accounts(session, lender: Lender, accounts: list[dict[str, Any]]) -> None:
     for account_data in accounts:
+        expected_last4 = account_data["account_number_masked"][-4:]
+        by_bank_result = await session.execute(
+            select(LenderBankAccount).where(
+                and_(
+                    LenderBankAccount.lender_id == lender.id,
+                    LenderBankAccount.bank_name == account_data["bank_name"],
+                    LenderBankAccount.status != "deleted",
+                )
+            )
+        )
+        existing_by_bank = by_bank_result.scalars().all()
+        account = next(
+            (
+                acc
+                for acc in existing_by_bank
+                if acc.account_number_masked[-4:] == expected_last4
+            ),
+            None,
+        )
+        if account is None:
+            account = next(
+                (
+                    acc
+                    for acc in existing_by_bank
+                    if acc.account_holder_name == account_data["account_holder_name"]
+                    and acc.account_type == account_data["account_type"]
+                ),
+                None,
+            )
+
+        if account is None:
+            account = LenderBankAccount(lender_id=lender.id, **account_data)
+            session.add(account)
+            continue
+
         result = await session.execute(
             select(LenderBankAccount).where(
                 and_(
@@ -350,12 +385,9 @@ async def _upsert_lender_accounts(session, lender: Lender, accounts: list[dict[s
                 )
             )
         )
-        account = result.scalar_one_or_none()
-
-        if account is None:
-            account = LenderBankAccount(lender_id=lender.id, **account_data)
-            session.add(account)
-            continue
+        exact_match = result.scalar_one_or_none()
+        if exact_match is not None:
+            account = exact_match
 
         for key, value in account_data.items():
             setattr(account, key, value)

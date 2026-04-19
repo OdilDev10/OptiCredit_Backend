@@ -329,7 +329,7 @@ async def create_lender_bank_account(
         lender_id=lender_id,
         bank_name=request.bank_name,
         account_type=request.account_type,
-        account_number_masked=mask_account_number(request.account_number),
+        account_number_masked=request.account_number.strip(),
         account_holder_name=request.account_holder_name,
         currency=request.currency,
         is_primary=should_be_primary,
