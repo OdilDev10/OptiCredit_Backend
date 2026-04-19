@@ -5,16 +5,19 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.db.session import get_db
 from app.dependencies import get_current_user, get_lender_context, require_roles
 from app.models.user import User
 from app.models.lender import Lender, LenderBankAccount
+from app.models.loan import Loan
 from app.models.lender_document import LenderDocument
 from app.models.subscription import Subscription, SubscriptionStatus
 from app.repositories.user_repo import UserRepository
-from app.core.enums import LenderDocumentType
+from app.core.enums import LenderDocumentType, LenderStatus, LoanStatus, UserStatus
+from app.services.auth_service import AuthService
+from app.services.audit_service import AuditService
 from app.services.storage_service import storage_service
 
 
@@ -229,18 +232,74 @@ async def delete_lender_account(
     lender_id: str = Depends(get_lender_context),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Delete lender account and all associated data (irreversible)."""
+    """Schedule lender account deletion after business-rule checks."""
     lender_result = await session.execute(select(Lender).where(Lender.id == lender_id))
     lender = lender_result.scalar_one_or_none()
 
     if not lender:
         raise HTTPException(status_code=404, detail="Lender not found")
 
-    lender.status = "cancelled"
-    lender.updated_at = datetime.utcnow()
+    active_loans_query = select(func.count(Loan.id)).where(
+        Loan.lender_id == lender.id,
+        Loan.status.in_(
+            [
+                LoanStatus.APPROVED,
+                LoanStatus.DISBURSED,
+                LoanStatus.ACTIVE,
+                LoanStatus.OVERDUE,
+            ]
+        ),
+    )
+    active_loans = await session.scalar(active_loans_query)
+    if active_loans and active_loans > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "ACCOUNT_DELETION_BLOCKED_ACTIVE_LOANS",
+                "message": "No puedes eliminar la cuenta del prestamista con préstamos activos.",
+                "detail": {
+                    "active_loans": int(active_loans),
+                },
+            },
+        )
+
+    now = datetime.utcnow()
+    scheduled_deletion_at = now + timedelta(days=30)
+
+    lender.status = LenderStatus.SUSPENDED
+    lender.updated_at = now
+
+    lender_users_result = await session.execute(select(User).where(User.lender_id == lender.id))
+    lender_users = lender_users_result.scalars().all()
+    for lender_user in lender_users:
+        lender_user.status = UserStatus.INACTIVE
+        lender_user.updated_at = now
+
+    await AuthService(session).logout_all(str(current_user.id))
+    await AuditService(session).log(
+        action="delete",
+        resource_type="lender_account",
+        resource_id=str(lender.id),
+        description="Lender account scheduled for deletion in 30 days",
+        user_id=current_user.id,
+        user_email=current_user.email,
+        user_name=f"{current_user.first_name} {current_user.last_name}",
+        lender_id=lender.id,
+        metadata={
+            "requested_at": now.isoformat(),
+            "scheduled_deletion_at": scheduled_deletion_at.isoformat(),
+            "retention_policy": "soft-delete-audit-retention",
+        },
+    )
+
     await session.commit()
 
-    return {"success": True, "message": "Account scheduled for deletion"}
+    return {
+        "success": True,
+        "message": "Cuenta del prestamista programada para eliminación en 30 días",
+        "scheduled_deletion_at": scheduled_deletion_at.isoformat(),
+        "retention_policy": "soft-delete-audit-retention",
+    }
 
 
 # === Bank Accounts ===

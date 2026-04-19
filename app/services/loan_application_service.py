@@ -1,6 +1,6 @@
 """Loan Application service - create and review loan applications."""
 
-from uuid import uuid4
+from uuid import uuid4, UUID
 from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,10 +9,19 @@ from sqlalchemy import select
 from app.repositories.loan_application_repo import LoanApplicationRepository
 from app.repositories.customer_repo import CustomerRepository
 from app.repositories.lender_repo import LenderRepository
-from app.models.loan_application import LoanApplication, LoanApplicationStatus, LoanFrequency
+from app.models.loan_application import (
+    LoanApplication,
+    LoanApplicationStatus,
+    LoanFrequency,
+)
 from app.models.customer_lender_link import CustomerLenderLink
 from app.core.enums import LinkStatus
-from app.core.exceptions import ValidationException, NotFoundException, ForbiddenException
+from app.core.exceptions import (
+    ValidationException,
+    NotFoundException,
+    ForbiddenException,
+)
+from app.services.notification_service import NotificationService
 
 
 class LoanApplicationService:
@@ -49,7 +58,9 @@ class LoanApplicationService:
 
         # Validate customer status
         if customer.status != "active":
-            raise ValidationException(f"Customer status is {customer.status}, must be active")
+            raise ValidationException(
+                f"Customer status is {customer.status}, must be active"
+            )
 
         # Validate amounts and counts
         if requested_amount <= 0:
@@ -74,16 +85,18 @@ class LoanApplicationService:
             )
 
         # Create application
-        application = await self.repo.create({
-            "customer_id": customer_id,
-            "lender_id": lender_id,
-            "requested_amount": requested_amount,
-            "requested_interest_rate": requested_interest_rate,
-            "requested_installments_count": requested_installments_count,
-            "requested_frequency": requested_frequency,
-            "purpose": purpose,
-            "status": LoanApplicationStatus.SUBMITTED,
-        })
+        application = await self.repo.create(
+            {
+                "customer_id": customer_id,
+                "lender_id": lender_id,
+                "requested_amount": requested_amount,
+                "requested_interest_rate": requested_interest_rate,
+                "requested_installments_count": requested_installments_count,
+                "requested_frequency": requested_frequency,
+                "purpose": purpose,
+                "status": LoanApplicationStatus.SUBMITTED,
+            }
+        )
 
         await self.session.commit()
 
@@ -106,11 +119,15 @@ class LoanApplicationService:
 
         # Validate status
         if application.status != LoanApplicationStatus.SUBMITTED:
-            raise ValidationException(f"Application status is {application.status}, cannot submit for review")
+            raise ValidationException(
+                f"Application status is {application.status}, cannot submit for review"
+            )
 
         # Update status
         application.status = LoanApplicationStatus.UNDER_REVIEW
-        await self.repo.update(application, {"status": LoanApplicationStatus.UNDER_REVIEW})
+        await self.repo.update(
+            application, {"status": LoanApplicationStatus.UNDER_REVIEW}
+        )
         await self.session.commit()
 
         return {
@@ -133,8 +150,13 @@ class LoanApplicationService:
         if application.lender_id != lender_id:
             raise ForbiddenException("Not authorized to review this application")
 
-        if application.status not in (LoanApplicationStatus.SUBMITTED, LoanApplicationStatus.UNDER_REVIEW):
-            raise ValidationException(f"Cannot approve application with status {application.status}")
+        if application.status not in (
+            LoanApplicationStatus.SUBMITTED,
+            LoanApplicationStatus.UNDER_REVIEW,
+        ):
+            raise ValidationException(
+                f"Cannot approve application with status {application.status}"
+            )
 
         # Update
         application.status = LoanApplicationStatus.APPROVED
@@ -142,19 +164,40 @@ class LoanApplicationService:
         application.reviewed_at = datetime.now(timezone.utc)
         application.review_notes = review_notes
 
-        await self.repo.update(application, {
-            "status": LoanApplicationStatus.APPROVED,
-            "reviewed_by": reviewed_by_user_id,
-            "reviewed_at": datetime.now(timezone.utc),
-            "review_notes": review_notes,
-        })
+        await self.repo.update(
+            application,
+            {
+                "status": LoanApplicationStatus.APPROVED,
+                "reviewed_by": reviewed_by_user_id,
+                "reviewed_at": datetime.now(timezone.utc),
+                "review_notes": review_notes,
+            },
+        )
 
         await self.session.commit()
+
+        # Send notification to customer
+        try:
+            notification_service = NotificationService(self.session)
+            customer = await self.customer_repo.get_or_404(application.customer_id)
+            lender = await self.lender_repo.get_or_404(application.lender_id)
+            if customer.user_id:
+                await notification_service.notify_application_approved(
+                    customer_user_id=customer.user_id,
+                    customer_name=f"{customer.first_name} {customer.last_name}",
+                    application_id=str(application.id),
+                    amount=application.requested_amount,
+                    lender_name=lender.commercial_name or lender.legal_name,
+                )
+        except Exception:
+            pass  # Don't fail the approval if notification fails
 
         return {
             "application_id": str(application.id),
             "status": application.status.value,
-            "approved_at": application.reviewed_at.isoformat() if application.reviewed_at else None,
+            "approved_at": application.reviewed_at.isoformat()
+            if application.reviewed_at
+            else None,
             "message": "Application approved",
         }
 
@@ -172,8 +215,13 @@ class LoanApplicationService:
         if application.lender_id != lender_id:
             raise ForbiddenException("Not authorized to review this application")
 
-        if application.status not in (LoanApplicationStatus.SUBMITTED, LoanApplicationStatus.UNDER_REVIEW):
-            raise ValidationException(f"Cannot reject application with status {application.status}")
+        if application.status not in (
+            LoanApplicationStatus.SUBMITTED,
+            LoanApplicationStatus.UNDER_REVIEW,
+        ):
+            raise ValidationException(
+                f"Cannot reject application with status {application.status}"
+            )
 
         if not review_notes:
             raise ValidationException("Review notes are required for rejection")
@@ -184,19 +232,40 @@ class LoanApplicationService:
         application.reviewed_at = datetime.now(timezone.utc)
         application.review_notes = review_notes
 
-        await self.repo.update(application, {
-            "status": LoanApplicationStatus.REJECTED,
-            "reviewed_by": reviewed_by_user_id,
-            "reviewed_at": datetime.now(timezone.utc),
-            "review_notes": review_notes,
-        })
+        await self.repo.update(
+            application,
+            {
+                "status": LoanApplicationStatus.REJECTED,
+                "reviewed_by": reviewed_by_user_id,
+                "reviewed_at": datetime.now(timezone.utc),
+                "review_notes": review_notes,
+            },
+        )
 
         await self.session.commit()
+
+        # Send notification to customer
+        try:
+            notification_service = NotificationService(self.session)
+            customer = await self.customer_repo.get_or_404(application.customer_id)
+            lender = await self.lender_repo.get_or_404(application.lender_id)
+            if customer.user_id:
+                await notification_service.notify_application_rejected(
+                    customer_user_id=customer.user_id,
+                    customer_name=f"{customer.first_name} {customer.last_name}",
+                    application_id=str(application.id),
+                    reason=review_notes,
+                    lender_name=lender.commercial_name or lender.legal_name,
+                )
+        except Exception:
+            pass  # Don't fail the rejection if notification fails
 
         return {
             "application_id": str(application.id),
             "status": application.status.value,
-            "rejected_at": application.reviewed_at.isoformat() if application.reviewed_at else None,
+            "rejected_at": application.reviewed_at.isoformat()
+            if application.reviewed_at
+            else None,
             "message": "Application rejected",
         }
 
@@ -219,8 +288,12 @@ class LoanApplicationService:
             "requested_frequency": application.requested_frequency,
             "purpose": application.purpose,
             "status": application.status.value,
-            "reviewed_by": str(application.reviewed_by) if application.reviewed_by else None,
-            "reviewed_at": application.reviewed_at.isoformat() if application.reviewed_at else None,
+            "reviewed_by": str(application.reviewed_by)
+            if application.reviewed_by
+            else None,
+            "reviewed_at": application.reviewed_at.isoformat()
+            if application.reviewed_at
+            else None,
             "review_notes": application.review_notes,
             "created_at": application.created_at.isoformat(),
         }

@@ -1,15 +1,28 @@
 """Authentication endpoints."""
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.db.session import get_db
 from app.schemas.auth import (
-    LoginRequest, TokenResponse, RefreshTokenRequest, RegisterRequest,
-    RegisterResponse, VerifyEmailRequest, ForgotPasswordRequest,
-    ResetPasswordRequest, ChangePasswordRequest, SendOTPRequest,
-    VerifyOTPRequest, AuthResponse, UserResponse,
-    RegisterCustomerRequest, RegisterLenderRequest, RegistrationEntityResponse,
+    LoginRequest,
+    TokenResponse,
+    RefreshTokenRequest,
+    RegisterRequest,
+    RegisterResponse,
+    VerifyEmailRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+    ChangePasswordRequest,
+    SendOTPRequest,
+    VerifyOTPRequest,
+    AuthResponse,
+    UserResponse,
+    RegisterCustomerRequest,
+    RegisterLenderRequest,
+    RegistrationEntityResponse,
 )
 from app.schemas.common import MessageResponse
 from app.services.auth_service import AuthService
@@ -18,25 +31,34 @@ from app.models.user import User
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+limiter = Limiter(key_func=get_remote_address)
 
 
-@router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED
+)
+@limiter.limit("5/minute")
 async def register(
-    request: RegisterRequest,
+    request: Request,
+    request_data: RegisterRequest,
     session: AsyncSession = Depends(get_db),
 ) -> RegisterResponse:
-    """Register new user with email verification."""
+    """Register new user with email verification. Rate limited: 5/minute."""
     service = AuthService(session)
     result = await service.register(
-        email=request.email,
-        password=request.password,
-        first_name=request.first_name,
-        last_name=request.last_name,
+        email=request_data.email,
+        password=request_data.password,
+        first_name=request_data.first_name,
+        last_name=request_data.last_name,
     )
     return RegisterResponse(**result)
 
 
-@router.post("/register/customer", response_model=RegistrationEntityResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register/customer",
+    response_model=RegistrationEntityResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def register_customer(
     request: RegisterCustomerRequest,
     session: AsyncSession = Depends(get_db),
@@ -59,7 +81,11 @@ async def register_customer(
     return RegistrationEntityResponse(**result)
 
 
-@router.post("/register/lender", response_model=RegistrationEntityResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register/lender",
+    response_model=RegistrationEntityResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def register_lender(
     request: RegisterLenderRequest,
     session: AsyncSession = Depends(get_db),
@@ -90,13 +116,15 @@ async def verify_email(
 
 
 @router.post("/login", response_model=AuthResponse, status_code=status.HTTP_200_OK)
+@limiter.limit("10/minute")
 async def login(
-    request: LoginRequest,
+    request: Request,
+    login_request: LoginRequest,
     session: AsyncSession = Depends(get_db),
 ) -> AuthResponse:
-    """Login user and return access/refresh tokens."""
+    """Login user and return access/refresh tokens. Rate limited: 10/minute."""
     service = AuthService(session)
-    result = await service.login(request.email, request.password)
+    result = await service.login(login_request.email, login_request.password)
     return AuthResponse(**result)
 
 
@@ -105,7 +133,7 @@ async def refresh_token(
     request: RefreshTokenRequest,
     session: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
-    """Refresh access token using refresh token."""
+    """Refresh access token using refresh token. Rate limited: 15/minute."""
     service = AuthService(session)
     result = await service.refresh_token_service(request.refresh_token)
     return TokenResponse(**result)
@@ -113,10 +141,25 @@ async def refresh_token(
 
 @router.post("/logout", response_model=MessageResponse)
 async def logout(
+    request: RefreshTokenRequest,
     current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    """Logout user (client should discard tokens)."""
-    return MessageResponse(message="Logged out successfully")
+    """Logout user and invalidate current refresh token."""
+    service = AuthService(session)
+    result = await service.logout(str(current_user.id), request.refresh_token)
+    return MessageResponse(message=result.get("message", "Logged out successfully"))
+
+
+@router.post("/logout-all", response_model=MessageResponse)
+async def logout_all(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> MessageResponse:
+    """Logout from all devices - invalidate all refresh tokens."""
+    service = AuthService(session)
+    result = await service.logout_all(str(current_user.id))
+    return MessageResponse(message=result.get("message", "Logged out from all devices"))
 
 
 @router.get("/me", response_model=UserResponse)
@@ -140,13 +183,15 @@ async def get_me(
 
 
 @router.post("/forgot-password", response_model=MessageResponse)
+@limiter.limit("5/minute")
 async def forgot_password(
-    request: ForgotPasswordRequest,
+    request: Request,
+    request_data: ForgotPasswordRequest,
     session: AsyncSession = Depends(get_db),
 ) -> MessageResponse:
-    """Request password reset via email."""
+    """Request password reset via email. Rate limited: 5/minute."""
     service = AuthService(session)
-    result = await service.forgot_password(request.email)
+    result = await service.forgot_password(request_data.email)
     return MessageResponse(message=result.get("message", "Email sent if exists"))
 
 

@@ -18,6 +18,44 @@ from app.models.lender import Lender
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
+@router.get("/public/home-kpis")
+async def get_public_home_kpis(
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Get public KPI snapshot for landing/home cards."""
+    now = datetime.utcnow()
+    first_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    active_loans_result = await session.execute(
+        select(func.count(Loan.id)).where(
+            Loan.status.in_([LoanStatus.ACTIVE, LoanStatus.OVERDUE]),
+        )
+    )
+    active_loans = int(active_loans_result.scalar() or 0)
+
+    collected_this_month_result = await session.execute(
+        select(func.coalesce(func.sum(Payment.amount), 0)).where(
+            Payment.status == PaymentStatus.APPROVED,
+            Payment.reviewed_at >= first_of_month,
+        )
+    )
+    collected_this_month = float(collected_this_month_result.scalar() or 0)
+
+    overdue_count_result = await session.execute(
+        select(func.count(Loan.id)).where(
+            Loan.status == LoanStatus.OVERDUE,
+        )
+    )
+    overdue_count = int(overdue_count_result.scalar() or 0)
+
+    return {
+        "active_loans": active_loans,
+        "collected_this_month": collected_this_month,
+        "overdue_count": overdue_count,
+        "as_of": now.isoformat(),
+    }
+
+
 @router.get("/dashboard")
 async def get_dashboard_stats(
     current_user: User = Depends(require_roles("owner", "manager", "reviewer")),

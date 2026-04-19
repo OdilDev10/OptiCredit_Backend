@@ -1,7 +1,7 @@
 """Authentication service with login, register, password reset, OTP logic."""
 
 from uuid import uuid4
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.user_repo import UserRepository
 from app.repositories.customer_repo import CustomerRepository
@@ -25,6 +25,7 @@ from app.core.exceptions import (
 from app.core.enums import AccountType, UserRole
 from app.core.permissions import get_permissions_for_role
 from app.services.email_service import email_service
+from app.services.token_blacklist import token_blacklist
 from app.config import settings
 import random
 import string
@@ -172,17 +173,25 @@ class AuthService:
             raise UnauthorizedException("Invalid email or password")
 
         # Update last login
-        await self.user_repo.update(user, {"last_login_at": datetime.utcnow()})
+        await self.user_repo.update(user, {"last_login_at": datetime.now(timezone.utc)})
 
         # Create tokens
         access_token = create_access_token(self._build_access_claims(user))
 
-        refresh_token = create_refresh_token(
+        refresh_token, token_id = create_refresh_token(
             {
                 "sub": str(user.id),
                 "type": "refresh",
             }
         )
+
+        # Register refresh token for rotation tracking
+        from datetime import timedelta
+
+        exp = datetime.now(timezone.utc) + timedelta(
+            days=settings.refresh_token_expire_days
+        )
+        token_blacklist.register_token(str(user.id), refresh_token, exp)
 
         await self.session.commit()
 
@@ -208,7 +217,11 @@ class AuthService:
         }
 
     async def refresh_token_service(self, refresh_token: str) -> dict:
-        """Refresh access token using refresh token."""
+        """Refresh access token using refresh token with rotation."""
+        # Check if token is blacklisted
+        if token_blacklist.is_blacklisted(refresh_token):
+            raise UnauthorizedException("Token has been revoked")
+
         # Decode refresh token
         payload = decode_token(refresh_token)
 
@@ -222,12 +235,49 @@ class AuthService:
         # Get user
         user = await self.user_repo.get_or_404(user_id)
 
+        # Rotate token: blacklist old refresh token
+        token_blacklist.blacklist_token(refresh_token)
+
         # Create new access token
         access_token = create_access_token(self._build_access_claims(user))
 
+        # Create new refresh token
+        new_refresh_token, new_token_id = create_refresh_token(
+            {
+                "sub": str(user.id),
+                "type": "refresh",
+            }
+        )
+
+        # Register new refresh token
+        from datetime import timedelta
+
+        exp = datetime.now(timezone.utc) + timedelta(
+            days=settings.refresh_token_expire_days
+        )
+        token_blacklist.register_token(str(user.id), new_refresh_token, exp)
+
+        await self.session.commit()
+
         return {
             "access_token": access_token,
+            "refresh_token": new_refresh_token,
             "token_type": "bearer",
+        }
+
+    async def logout_all(self, user_id: str) -> dict:
+        """Logout from all devices - invalidate all refresh tokens for user."""
+        count = token_blacklist.revoke_all_user_tokens(user_id)
+        return {
+            "message": f"Logged out from all devices",
+            "revoked_sessions": count,
+        }
+
+    async def logout(self, user_id: str, refresh_token: str) -> dict:
+        """Logout - invalidate the current refresh token."""
+        token_blacklist.blacklist_token(refresh_token)
+        return {
+            "message": "Logged out successfully",
         }
 
     async def forgot_password(self, email: str) -> dict:

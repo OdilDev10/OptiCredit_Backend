@@ -5,7 +5,12 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.repositories.payment_repo import PaymentRepository, VoucherRepository, OcrResultRepository, PaymentMatchRepository
+from app.repositories.payment_repo import (
+    PaymentRepository,
+    VoucherRepository,
+    OcrResultRepository,
+    PaymentMatchRepository,
+)
 from app.repositories.loan_repo import InstallmentRepository, LoanRepository
 from app.repositories.customer_repo import CustomerRepository
 from app.models.payment import (
@@ -19,7 +24,12 @@ from app.models.payment import (
     PaymentMatch,
 )
 from app.models.loan import Installment, InstallmentStatus
-from app.core.exceptions import ValidationException, NotFoundException, ForbiddenException
+from app.core.exceptions import (
+    ValidationException,
+    NotFoundException,
+    ForbiddenException,
+)
+from app.services.notification_service import NotificationService
 
 
 class PaymentService:
@@ -63,18 +73,20 @@ class PaymentService:
             raise ValidationException("Payment amount exceeds remaining balance")
 
         # Create payment record
-        payment = await self.payment_repo.create({
-            "lender_id": lender_id,
-            "customer_id": customer_id,
-            "loan_id": loan_id,
-            "installment_id": installment_id,
-            "amount": amount,
-            "currency": "RD$",
-            "method": PaymentMethod.BANK_TRANSFER,
-            "source": PaymentSource(source),
-            "status": PaymentStatus.SUBMITTED,
-            "submitted_by_user_id": submitted_by_user_id,
-        })
+        payment = await self.payment_repo.create(
+            {
+                "lender_id": lender_id,
+                "customer_id": customer_id,
+                "loan_id": loan_id,
+                "installment_id": installment_id,
+                "amount": amount,
+                "currency": "RD$",
+                "method": PaymentMethod.BANK_TRANSFER,
+                "source": PaymentSource(source),
+                "status": PaymentStatus.SUBMITTED,
+                "submitted_by_user_id": submitted_by_user_id,
+            }
+        )
 
         await self.session.commit()
 
@@ -101,7 +113,11 @@ class PaymentService:
 
         # Check if all vouchers are processed
         for voucher in vouchers:
-            status_value = voucher.status.value if hasattr(voucher.status, "value") else str(voucher.status)
+            status_value = (
+                voucher.status.value
+                if hasattr(voucher.status, "value")
+                else str(voucher.status)
+            )
             if status_value != VoucherStatus.PROCESSED.value:
                 raise ValidationException(f"Voucher {voucher.id} not yet processed")
 
@@ -130,7 +146,9 @@ class PaymentService:
             raise ForbiddenException("Not authorized to review this payment")
 
         if payment.status != PaymentStatus.UNDER_REVIEW:
-            raise ValidationException(f"Cannot approve payment with status {payment.status}")
+            raise ValidationException(
+                f"Cannot approve payment with status {payment.status}"
+            )
 
         # Update payment
         payment.status = PaymentStatus.APPROVED
@@ -138,12 +156,15 @@ class PaymentService:
         payment.reviewed_at = datetime.now(timezone.utc)
         payment.review_notes = review_notes
 
-        await self.payment_repo.update(payment, {
-            "status": PaymentStatus.APPROVED,
-            "reviewed_by_user_id": reviewed_by_user_id,
-            "reviewed_at": datetime.now(timezone.utc),
-            "review_notes": review_notes,
-        })
+        await self.payment_repo.update(
+            payment,
+            {
+                "status": PaymentStatus.APPROVED,
+                "reviewed_by_user_id": reviewed_by_user_id,
+                "reviewed_at": datetime.now(timezone.utc),
+                "review_notes": review_notes,
+            },
+        )
 
         # Update installment
         installment = await self.installment_repo.get_or_404(payment.installment_id)
@@ -156,13 +177,33 @@ class PaymentService:
         else:
             installment.status = InstallmentStatus.PARTIAL
 
-        await self.installment_repo.update(installment, {
-            "amount_paid": installment.amount_paid,
-            "status": installment.status,
-            "paid_at": installment.paid_at,
-        })
+        await self.installment_repo.update(
+            installment,
+            {
+                "amount_paid": installment.amount_paid,
+                "status": installment.status,
+                "paid_at": installment.paid_at,
+            },
+        )
 
         await self.session.commit()
+
+        # Send notification to customer
+        try:
+            notification_service = NotificationService(self.session)
+            customer = await self.customer_repo.get_or_404(payment.customer_id)
+            loan = await self.loan_repo.get_or_404(payment.loan_id)
+            if customer.user_id:
+                await notification_service.notify_payment_approved(
+                    customer_user_id=customer.user_id,
+                    customer_name=f"{customer.first_name} {customer.last_name}",
+                    payment_id=str(payment.id),
+                    amount=payment.amount,
+                    loan_number=loan.loan_number,
+                    installment_number=installment.installment_number,
+                )
+        except Exception:
+            pass  # Don't fail the approval if notification fails
 
         return {
             "payment_id": str(payment.id),
@@ -185,7 +226,9 @@ class PaymentService:
             raise ForbiddenException("Not authorized to review this payment")
 
         if payment.status != PaymentStatus.UNDER_REVIEW:
-            raise ValidationException(f"Cannot reject payment with status {payment.status}")
+            raise ValidationException(
+                f"Cannot reject payment with status {payment.status}"
+            )
 
         if not review_notes:
             raise ValidationException("Review notes required for rejection")
@@ -196,14 +239,32 @@ class PaymentService:
         payment.reviewed_at = datetime.now(timezone.utc)
         payment.review_notes = review_notes
 
-        await self.payment_repo.update(payment, {
-            "status": PaymentStatus.REJECTED,
-            "reviewed_by_user_id": reviewed_by_user_id,
-            "reviewed_at": datetime.now(timezone.utc),
-            "review_notes": review_notes,
-        })
+        await self.payment_repo.update(
+            payment,
+            {
+                "status": PaymentStatus.REJECTED,
+                "reviewed_by_user_id": reviewed_by_user_id,
+                "reviewed_at": datetime.now(timezone.utc),
+                "review_notes": review_notes,
+            },
+        )
 
         await self.session.commit()
+
+        # Send notification to customer
+        try:
+            notification_service = NotificationService(self.session)
+            customer = await self.customer_repo.get_or_404(payment.customer_id)
+            if customer.user_id:
+                await notification_service.notify_payment_rejected(
+                    customer_user_id=customer.user_id,
+                    customer_name=f"{customer.first_name} {customer.last_name}",
+                    payment_id=str(payment.id),
+                    amount=payment.amount,
+                    reason=review_notes,
+                )
+        except Exception:
+            pass  # Don't fail the rejection if notification fails
 
         return {
             "payment_id": str(payment.id),
@@ -223,16 +284,24 @@ class PaymentService:
         voucher_data = []
         for voucher in vouchers:
             ocr = await self.ocr_repo.get_by_voucher(voucher.id)
-            voucher_data.append({
-                "voucher_id": str(voucher.id),
-                "file_url": voucher.original_file_url,
-                "status": voucher.status.value,
-                "ocr_result": {
-                    "detected_amount": float(ocr.detected_amount) if ocr and ocr.detected_amount else None,
-                    "detected_date": ocr.detected_date if ocr else None,
-                    "confidence_score": float(ocr.confidence_score) if ocr else None,
-                } if ocr else None,
-            })
+            voucher_data.append(
+                {
+                    "voucher_id": str(voucher.id),
+                    "file_url": voucher.original_file_url,
+                    "status": voucher.status.value,
+                    "ocr_result": {
+                        "detected_amount": float(ocr.detected_amount)
+                        if ocr and ocr.detected_amount
+                        else None,
+                        "detected_date": ocr.detected_date if ocr else None,
+                        "confidence_score": float(ocr.confidence_score)
+                        if ocr
+                        else None,
+                    }
+                    if ocr
+                    else None,
+                }
+            )
 
         return {
             "payment_id": str(payment.id),

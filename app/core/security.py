@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 import hashlib
+import uuid
 from typing import Any
 
 import bcrypt
@@ -46,13 +47,22 @@ def create_access_token(data: dict[str, Any]) -> str:
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
 
-def create_refresh_token(data: dict[str, Any]) -> str:
-    """Create a signed refresh token."""
+def create_refresh_token(
+    data: dict[str, Any], token_id: str | None = None
+) -> tuple[str, str]:
+    """
+    Create a signed refresh token with a unique ID for rotation tracking.
+    Returns (token_string, token_id).
+    """
+    if token_id is None:
+        token_id = str(uuid.uuid4())
+
     expires_at = datetime.now(timezone.utc) + timedelta(
         days=settings.refresh_token_expire_days,
     )
-    payload = {**data, "exp": expires_at}
-    return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+    payload = {**data, "exp": expires_at, "jti": token_id}
+    token = jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+    return token, token_id
 
 
 def decode_token(token: str) -> dict[str, Any]:

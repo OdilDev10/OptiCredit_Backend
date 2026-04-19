@@ -1,20 +1,29 @@
 """Client settings API - profile and account management."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.db.session import get_db
 from app.dependencies import get_current_user
 from app.models.user import User
 from app.models.customer import Customer
+from app.models.loan import Loan, Installment
 from app.models.customer_document import CustomerDocument
 from app.models.client_bank_account import ClientBankAccount
-from app.core.enums import CustomerStatus, DocumentType
+from app.core.enums import (
+    CustomerStatus,
+    DocumentType,
+    UserStatus,
+    LoanStatus,
+    InstallmentStatus,
+)
+from app.services.auth_service import AuthService
+from app.services.audit_service import AuditService
 from app.services.storage_service import storage_service
 
 
@@ -111,21 +120,91 @@ async def delete_client_account(
     current_user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Delete client account (irreversible)."""
+    """Schedule client account deletion after business-rule checks."""
     result = await session.execute(
         select(Customer).where(Customer.user_id == current_user.id)
     )
     customer = result.scalar_one_or_none()
 
-    if customer:
-        customer.status = CustomerStatus.BLOCKED
-        customer.updated_at = datetime.utcnow()
-    else:
-        current_user.status = "blocked"
-        current_user.updated_at = datetime.utcnow()
+    if not customer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "code": "CUSTOMER_NOT_FOUND",
+                "message": "Customer profile not found",
+            },
+        )
+
+    unpaid_installments_query = (
+        select(func.count(Installment.id))
+        .select_from(Installment)
+        .join(Loan, Loan.id == Installment.loan_id)
+        .where(
+            Loan.customer_id == customer.id,
+            Loan.status.in_(
+                [
+                    LoanStatus.APPROVED,
+                    LoanStatus.DISBURSED,
+                    LoanStatus.ACTIVE,
+                    LoanStatus.OVERDUE,
+                ]
+            ),
+            Installment.status.in_(
+                [
+                    InstallmentStatus.PENDING,
+                    InstallmentStatus.UNDER_REVIEW,
+                    InstallmentStatus.PARTIAL,
+                    InstallmentStatus.OVERDUE,
+                    InstallmentStatus.REJECTED,
+                ]
+            ),
+        )
+    )
+    unpaid_installments = await session.scalar(unpaid_installments_query)
+    if unpaid_installments and unpaid_installments > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "ACCOUNT_DELETION_BLOCKED_PENDING_DEBT",
+                "message": "No puedes eliminar tu cuenta con deudas pendientes.",
+                "detail": {
+                    "pending_installments": int(unpaid_installments),
+                },
+            },
+        )
+
+    now = datetime.utcnow()
+    scheduled_deletion_at = now + timedelta(days=30)
+
+    customer.status = CustomerStatus.BLOCKED
+    customer.updated_at = now
+    current_user.status = UserStatus.INACTIVE
+    current_user.updated_at = now
+
+    await AuthService(session).logout_all(str(current_user.id))
+    await AuditService(session).log(
+        action="delete",
+        resource_type="customer_account",
+        resource_id=str(customer.id),
+        description="Client account scheduled for deletion in 30 days",
+        user_id=current_user.id,
+        user_email=current_user.email,
+        user_name=f"{current_user.first_name} {current_user.last_name}",
+        lender_id=customer.lender_id,
+        metadata={
+            "requested_at": now.isoformat(),
+            "scheduled_deletion_at": scheduled_deletion_at.isoformat(),
+            "retention_policy": "soft-delete-audit-retention",
+        },
+    )
 
     await session.commit()
-    return {"success": True, "message": "Account scheduled for deletion"}
+    return {
+        "success": True,
+        "message": "Cuenta programada para eliminación en 30 días",
+        "scheduled_deletion_at": scheduled_deletion_at.isoformat(),
+        "retention_policy": "soft-delete-audit-retention",
+    }
 
 
 ALLOWED_MIME_TYPES = {

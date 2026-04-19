@@ -9,6 +9,9 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.api.v1 import api_router
 from app.config import settings
@@ -20,8 +23,12 @@ from app.services.startup_seed import run_startup_seed
 logger = logging.getLogger("app.http")
 logger.setLevel(logging.INFO)
 
+limiter = Limiter(key_func=get_remote_address)
 
-def _build_error_response(code: str, message: str, detail: Any = None) -> dict[str, Any]:
+
+def _build_error_response(
+    code: str, message: str, detail: Any = None
+) -> dict[str, Any]:
     return {
         "success": False,
         "error": {
@@ -55,7 +62,8 @@ def _normalize_http_exception_detail(
     default_code = _status_code_to_error_code(status_code)
     default_message = (
         "Error de validación"
-        if status_code in {status.HTTP_400_BAD_REQUEST, status.HTTP_422_UNPROCESSABLE_ENTITY}
+        if status_code
+        in {status.HTTP_400_BAD_REQUEST, status.HTTP_422_UNPROCESSABLE_ENTITY}
         else "Solicitud inválida"
     )
 
@@ -118,6 +126,9 @@ app = FastAPI(
     description=settings.api_description,
     lifespan=lifespan,
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -188,7 +199,9 @@ async def handle_app_exception(_: Request, exc: AppException) -> JSONResponse:
 @app.exception_handler(HTTPException)
 async def handle_http_exception(_: Request, exc: HTTPException) -> JSONResponse:
     """Normalize FastAPI HTTPException to a single error contract."""
-    code, message, detail = _normalize_http_exception_detail(exc.status_code, exc.detail)
+    code, message, detail = _normalize_http_exception_detail(
+        exc.status_code, exc.detail
+    )
     return JSONResponse(
         status_code=exc.status_code,
         content=_build_error_response(code=code, message=message, detail=detail),
@@ -196,7 +209,9 @@ async def handle_http_exception(_: Request, exc: HTTPException) -> JSONResponse:
 
 
 @app.exception_handler(RequestValidationError)
-async def handle_request_validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+async def handle_request_validation_error(
+    _: Request, exc: RequestValidationError
+) -> JSONResponse:
     """Normalize request body/query/path validation errors."""
     issues = []
     for err in exc.errors():

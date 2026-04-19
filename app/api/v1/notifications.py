@@ -1,7 +1,9 @@
-"""Notifications API - User notifications."""
+"""Notifications API - User notifications with SSE support."""
 
+import asyncio
 from uuid import UUID
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, update
 
@@ -10,7 +12,7 @@ from app.dependencies import get_current_user
 from app.models.user import User
 from app.models.notification import Notification
 from app.core.exceptions import NotFoundException
-
+from app.services.sse_manager import sse_manager
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -32,8 +34,17 @@ async def list_notifications(
     )
     notifications = result.scalars().all()
 
+    unread_result = await session.execute(
+        select(Notification.id).where(
+            Notification.user_id == current_user.id,
+            Notification.is_read == False,
+        )
+    )
+    unread_count = len(unread_result.scalars().all())
+
     return {
         "count": len(notifications),
+        "unread_count": unread_count,
         "notifications": [
             {
                 "id": str(n.id),
@@ -46,6 +57,49 @@ async def list_notifications(
             for n in notifications
         ],
     }
+
+
+@router.get("/stream")
+async def notification_stream(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    SSE endpoint for real-time notifications.
+
+    Clients connect to this endpoint and receive notifications
+    as Server-Sent Events.
+    """
+    user_id = str(current_user.id)
+    queue = sse_manager.connect(user_id)
+
+    async def event_generator():
+        try:
+            yield f": connected\n\n"
+
+            while True:
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=30)
+                    yield f"data: {message}\n\n"
+                except asyncio.TimeoutError:
+                    yield f": keepalive\n\n"
+
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+        finally:
+            sse_manager.disconnect(user_id, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/{notification_id}/read")
@@ -78,14 +132,14 @@ async def mark_all_as_read(
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Mark all notifications as read."""
-    await session.execute(
+    result = await session.execute(
         update(Notification)
         .where(Notification.user_id == current_user.id, Notification.is_read == False)
         .values(is_read=True)
     )
     await session.commit()
 
-    return {"success": True}
+    return {"success": True, "marked_count": result.rowcount}
 
 
 @router.delete("/{notification_id}")

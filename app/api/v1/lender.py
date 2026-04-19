@@ -2,6 +2,7 @@
 
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, or_
 
@@ -24,6 +25,7 @@ from app.schemas.dashboard import (
     PaymentKPIs,
 )
 from app.services.dashboard_service import DashboardService
+from app.services.payment_service import PaymentService
 from app.services.storage_service import storage_service
 
 
@@ -125,6 +127,53 @@ async def get_payment_kpis(
     return PaymentKPIs(**data)
 
 
+class ApprovePaymentRequest(BaseModel):
+    review_notes: str | None = None
+
+
+class RejectPaymentRequest(BaseModel):
+    reason: str
+
+
+@router.post("/payments/{payment_id}/approve")
+async def approve_payment(
+    payment_id: UUID,
+    request: ApprovePaymentRequest | None = None,
+    current_user: User = Depends(
+        require_roles("platform_admin", "owner", "manager", "reviewer")
+    ),
+    lender_id: str = Depends(get_lender_context),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Approve a payment voucher."""
+    service = PaymentService(session)
+    await service.approve_payment(
+        str(payment_id),
+        lender_id,
+        str(current_user.id),
+        request.review_notes if request else None,
+    )
+    return {"success": True, "message": "Payment approved"}
+
+
+@router.post("/payments/{payment_id}/reject")
+async def reject_payment(
+    payment_id: UUID,
+    request: RejectPaymentRequest,
+    current_user: User = Depends(
+        require_roles("platform_admin", "owner", "manager", "reviewer")
+    ),
+    lender_id: str = Depends(get_lender_context),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Reject a payment voucher with reason."""
+    service = PaymentService(session)
+    await service.reject_payment(
+        str(payment_id), lender_id, str(current_user.id), request.reason
+    )
+    return {"success": True, "message": "Payment rejected"}
+
+
 @router.get("/customers/{customer_id}/loans")
 async def get_customer_loans_for_lender(
     customer_id: UUID,
@@ -153,7 +202,9 @@ async def get_customer_payments_for_lender(
 ) -> dict:
     """Get payment history for a specific customer in lender scope."""
     service = DashboardService(session)
-    items = await service.get_customer_payment_history(lender_id, str(customer_id), limit)
+    items = await service.get_customer_payment_history(
+        lender_id, str(customer_id), limit
+    )
     return {"items": items, "total": len(items), "limit": limit}
 
 
@@ -221,8 +272,7 @@ async def list_association_requests(
     total = total_result.scalar() or 0
 
     result = await session.execute(
-        base_query
-        .order_by(desc(CustomerLenderLink.created_at))
+        base_query.order_by(desc(CustomerLenderLink.created_at))
         .offset(skip)
         .limit(limit)
     )
@@ -240,7 +290,9 @@ async def list_association_requests(
                 "document_type": customer.document_type,
                 "document_number": customer.document_number,
                 "status": link.status.value,
-                "requested_at": link.created_at.isoformat() if link.created_at else None,
+                "requested_at": link.created_at.isoformat()
+                if link.created_at
+                else None,
                 "updated_at": link.updated_at.isoformat() if link.updated_at else None,
             }
         )
@@ -374,12 +426,16 @@ async def get_customer_profile_for_lender(
     approved_count = sum(1 for p in payments if p.status == PaymentStatus.APPROVED)
     rejected_count = sum(1 for p in payments if p.status == PaymentStatus.REJECTED)
     under_review_count = sum(
-        1 for p in payments if p.status in {PaymentStatus.SUBMITTED, PaymentStatus.UNDER_REVIEW}
+        1
+        for p in payments
+        if p.status in {PaymentStatus.SUBMITTED, PaymentStatus.UNDER_REVIEW}
     )
     approved_amount = float(
         sum((p.amount for p in payments if p.status == PaymentStatus.APPROVED), start=0)
     )
-    active_loan_count = sum(1 for loan in loans if loan.status in {LoanStatus.ACTIVE, LoanStatus.OVERDUE})
+    active_loan_count = sum(
+        1 for loan in loans if loan.status in {LoanStatus.ACTIVE, LoanStatus.OVERDUE}
+    )
 
     loan_history = [
         {
@@ -403,7 +459,9 @@ async def get_customer_profile_for_lender(
         document_items.append(
             {
                 "id": str(doc.id),
-                "document_type": doc.document_type.value if hasattr(doc.document_type, "value") else str(doc.document_type),
+                "document_type": doc.document_type.value
+                if hasattr(doc.document_type, "value")
+                else str(doc.document_type),
                 "status": doc.status,
                 "file_name": doc.file_name,
                 "file_path": doc.file_path,
@@ -423,8 +481,12 @@ async def get_customer_profile_for_lender(
             "phone": customer.phone,
             "document_type": customer.document_type,
             "document_number": customer.document_number,
-            "status": customer.status.value if hasattr(customer.status, "value") else str(customer.status),
-            "created_at": customer.created_at.isoformat() if customer.created_at else None,
+            "status": customer.status.value
+            if hasattr(customer.status, "value")
+            else str(customer.status),
+            "created_at": customer.created_at.isoformat()
+            if customer.created_at
+            else None,
             "association_status": link.status.value if link else "linked",
         },
         "credit_history": {
