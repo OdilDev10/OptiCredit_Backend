@@ -1,4 +1,4 @@
-# 🚀 Quick Start — Kashap Backend
+# 🚀 Quick Start — OptiCredit Backend
 
 ## ✅ Flujo definitivo (Windows + uv + logs + OCR obligatorio)
 
@@ -63,7 +63,7 @@ uv pip install -r requirements.txt
 ```bash
 # Opción A: Con Docker (sin instalar PostgreSQL)
 docker run -d \
-  --name postgres-kashap \
+  --name postgres-OptiCredit \
   -e POSTGRES_USER=prestamos_user \
   -e POSTGRES_PASSWORD=prestamos_pass \
   -e POSTGRES_DB=prestamos_db \
@@ -97,7 +97,7 @@ INFO:     Application startup complete
 curl http://localhost:8000/api/v1/app-config
 
 # Esperado:
-# {"app_name":"Kashap","version":"0.1.0",...}
+# {"app_name":"OptiCredit","version":"0.1.0",...}
 ```
 
 ---

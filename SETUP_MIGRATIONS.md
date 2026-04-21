@@ -1,4 +1,4 @@
-# Setup & Migration Guide — Kashap Backend
+# Setup & Migration Guide — OptiCredit Backend
 
 ## 🚀 Initial Setup
 
@@ -49,7 +49,7 @@ uvicorn app.main:app --reload
 curl http://localhost:8000/api/v1/app-config
 
 # Expected response:
-# {"app_name": "Kashap", "version": "0.1.0", ...}
+# {"app_name": "OptiCredit", "version": "0.1.0", ...}
 ```
 
 ## 📊 Database Schema

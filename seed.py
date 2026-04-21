@@ -324,7 +324,7 @@ async def seed_database():
             notif1 = Notification(
                 id=uuid4(),
                 user_id=owner_user.id,
-                title="Bienvenido a Kashap",
+                title="Bienvenido a OptiCredit",
                 message="Tu cuenta ha sido creada exitosamente.",
                 notification_type="welcome",
                 is_read=False,

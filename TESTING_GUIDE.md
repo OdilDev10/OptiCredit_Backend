@@ -1,4 +1,4 @@
-# Testing Guide — Kashap Backend
+# Testing Guide — OptiCredit Backend
 
 ## 🧪 Test Setup
 

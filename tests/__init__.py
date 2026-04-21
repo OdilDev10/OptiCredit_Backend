@@ -1,1 +1,1 @@
-"""Tests package for Kashap backend."""
+"""Tests package for OptiCredit backend."""

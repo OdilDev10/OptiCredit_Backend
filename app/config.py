@@ -66,9 +66,9 @@ class Settings(BaseSettings):
     ocr_lang: str = "es"
 
     # API
-    api_title: str = "Kashap"
+    api_title: str = "OptiCredit"
     api_version: str = "0.1.0"
-    api_description: str = "Kashap SaaS para gestión de préstamos con validación OCR"
+    api_description: str = "OptiCredit SaaS para gestión de préstamos con validación OCR"
 
     # CORS
     cors_origins: list[str] = [
