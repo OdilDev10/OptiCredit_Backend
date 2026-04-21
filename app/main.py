@@ -167,7 +167,20 @@ async def log_requests(request: Request, call_next):
             request.url.path,
             duration_ms,
         )
-        raise
+        response = JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=_build_error_response(
+                code="INTERNAL_SERVER_ERROR",
+                message="Error interno del servidor",
+                detail=None,
+            ),
+        )
+        origin = request.headers.get("origin")
+        if origin and origin in settings.cors_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Vary"] = "Origin"
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
 
 
 @app.get("/health", tags=["health"])

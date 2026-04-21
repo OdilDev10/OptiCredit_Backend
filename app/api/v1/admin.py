@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func, or_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -204,6 +205,66 @@ async def reactivate_lender(
     lender.status = LenderStatus.ACTIVE
     await session.commit()
     return {"message": "Lender reactivated successfully"}
+
+
+class RejectLenderRequest(BaseModel):
+    reason: str = Field(..., description="Reason for rejection")
+
+
+@router.get("/pending-applications", response_model=dict)
+async def list_pending_applications(
+    _: User = Depends(require_roles("platform_admin")),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """List all pending lender registration applications."""
+    result = await session.execute(
+        select(Lender).where(Lender.status == LenderStatus.PENDING)
+    )
+    lenders = result.scalars().all()
+    items = []
+    for lender in lenders:
+        items.append(
+            {
+                "id": str(lender.id),
+                "legal_name": lender.legal_name,
+                "commercial_name": lender.commercial_name,
+                "lender_type": lender.lender_type.value
+                if hasattr(lender.lender_type, "value")
+                else str(lender.lender_type),
+                "document_type": lender.document_type,
+                "document_number": lender.document_number,
+                "email": lender.email,
+                "phone": lender.phone,
+                "status": lender.status.value
+                if hasattr(lender.status, "value")
+                else str(lender.status),
+                "rejection_reason": None,
+                "submitted_at": lender.created_at.isoformat()
+                if lender.created_at
+                else None,
+            }
+        )
+    return {"items": items}
+
+
+@router.post("/{lender_id}/reject", status_code=status.HTTP_200_OK)
+async def reject_lender(
+    lender_id: str,
+    request: RejectLenderRequest,
+    _: User = Depends(require_roles("platform_admin")),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Reject a lender application with a reason."""
+    result = await session.execute(select(Lender).where(Lender.id == lender_id))
+    lender = result.scalar_one_or_none()
+    if not lender:
+        from app.core.exceptions import NotFoundException
+
+        raise NotFoundException("Lender not found")
+
+    lender.status = LenderStatus.REJECTED
+    await session.commit()
+    return {"message": f"Lender rejected: {request.reason}"}
 
 
 # Admin Users endpoints

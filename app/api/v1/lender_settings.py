@@ -1,5 +1,6 @@
 """Lender settings API - company info, subscription, account management, documents."""
 
+import uuid
 from uuid import UUID
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
