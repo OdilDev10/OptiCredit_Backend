@@ -1,6 +1,7 @@
 """Notifications API - User notifications with SSE support."""
 
 import asyncio
+import json
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.security import HTTPAuthorizationCredentials
@@ -101,14 +102,18 @@ async def notification_stream(
 
     async def event_generator():
         try:
-            yield f": connected\n\n"
+            # Send an initial data event immediately so edge proxies
+            # don't treat the stream as idle before first payload.
+            yield f"data: {json.dumps({'type': 'connected'})}\n\n"
 
             while True:
                 try:
-                    message = await asyncio.wait_for(queue.get(), timeout=30)
+                    message = await asyncio.wait_for(queue.get(), timeout=15)
                     yield f"data: {message}\n\n"
                 except asyncio.TimeoutError:
-                    yield f": keepalive\n\n"
+                    # Use a real data event heartbeat; comment-only chunks
+                    # are more likely to be swallowed by intermediaries.
+                    yield f"data: {json.dumps({'type': 'ping'})}\n\n"
 
         except asyncio.CancelledError:
             pass
@@ -121,7 +126,7 @@ async def notification_stream(
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
