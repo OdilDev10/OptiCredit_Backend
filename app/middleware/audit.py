@@ -33,10 +33,14 @@ AUDITABLE_PATHS = {
     "/api/v1/payments/with-voucher": ("payment", "submit_voucher"),
     "/api/v1/customers": ("customer", "create"),
     "/api/v1/lender/users": ("user", "create"),
+    "/api/v1/lender/users/{id}": ("user", "update"),
     "/api/v1/lender/loans": ("loan", "create"),
     "/api/v1/lender/payments": ("payment", "create"),
     "/api/v1/lender/payments/{id}/approve": ("payment", "approve"),
     "/api/v1/lender/payments/{id}/reject": ("payment", "reject"),
+    "/api/v1/lender/products": ("products", "create"),
+    "/api/v1/lender/products/{id}": ("products", "update"),
+    "/api/v1/lender/products/{id}/toggle": ("products", "toggle"),
     "/api/v1/admin/lenders": ("lender", "create"),
     "/api/v1/admin/users": ("user", "create"),
     "/api/v1/me/loans": ("loan", "create"),
@@ -143,7 +147,9 @@ def get_login_user_info_from_response(
         return None, None, None, None, None
 
     try:
-        payload = json.loads(body.decode("utf-8") if isinstance(body, bytes) else body)
+        if isinstance(body, bytes):
+            body = body.decode("utf-8")
+        payload = json.loads(body)
         user = payload.get("user") or {}
         user_id = UUID(str(user.get("id"))) if user.get("id") else None
         lender_id = UUID(str(user.get("lender_id"))) if user.get("lender_id") else None

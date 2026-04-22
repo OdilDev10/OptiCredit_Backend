@@ -83,6 +83,18 @@ SEED_LENDERS: dict[str, dict[str, Any]] = {
         "status": LenderStatus.ACTIVE,
         "subscription_plan": "basic",
     },
+    "crediplus": {
+        "legal_name": "CrédiPlus Dominicana SRL",
+        "commercial_name": "CrédiPlus",
+        "lender_type": LenderType.FINANCIAL,
+        "document_type": "RNC",
+        "document_number": "40200000007",
+        "email": "contacto@crediplus.do",
+        "phone": "8095550777",
+        "address_line": "Av. Abraham Lincoln 155, Santo Domingo",
+        "status": LenderStatus.ACTIVE,
+        "subscription_plan": "basic",
+    },
     "coopnacional": {
         "legal_name": "Cooperativa Nacional de Ahorros y Préstamos",
         "commercial_name": "CoopNacional",
@@ -185,9 +197,28 @@ SEED_USERS: list[dict[str, Any]] = [
         "status": UserStatus.ACTIVE,
         "lender_key": None,
     },
+    {
+        "email": "cliente.solicitud@opticredit.app",
+        "first_name": "Cliente",
+        "last_name": "Solicitud",
+        "phone": "8093333333",
+        "account_type": AccountType.CUSTOMER,
+        "role": UserRole.CUSTOMER,
+        "status": UserStatus.ACTIVE,
+        "lender_key": None,
+    },
 ]
 
-CUSTOMER_ASSOCIATIONS = ["opticredit", "microcred"]
+CUSTOMER_ASSOCIATIONS_BY_EMAIL: dict[str, dict[str, list[str]]] = {
+    "cliente@opticredit.app": {
+        "linked": ["opticredit"],
+        "pending": ["microcred"],
+    },
+    "cliente.solicitud@opticredit.app": {
+        "linked": [],
+        "pending": ["opticredit"],
+    },
+}
 
 LENDER_ACCOUNTS: dict[str, list[dict[str, Any]]] = {
     "opticredit": [
@@ -344,6 +375,8 @@ async def _upsert_customer_profile(
     session,
     customer_user: User,
     default_lender: Lender,
+    *,
+    document_number: str,
 ) -> Customer:
     result = await session.execute(
         select(Customer).where(Customer.user_id == customer_user.id)
@@ -356,7 +389,7 @@ async def _upsert_customer_profile(
         "first_name": customer_user.first_name,
         "last_name": customer_user.last_name,
         "document_type": "Cédula",
-        "document_number": "40200000003",
+        "document_number": document_number,
         "phone": customer_user.phone or "8092222222",
         "email": customer_user.email,
         "status": CustomerStatus.ACTIVE,
@@ -380,10 +413,25 @@ async def _upsert_customer_profile(
 
 
 async def _ensure_customer_links(
-    session, customer: Customer, lender_map: dict[str, Lender]
+    session,
+    customer: Customer,
+    lender_map: dict[str, Lender],
+    *,
+    linked_lender_keys: list[str],
+    pending_lender_keys: list[str],
 ) -> None:
-    for lender_key in CUSTOMER_ASSOCIATIONS:
-        lender = lender_map[lender_key]
+    desired_status_by_lender: dict[str, LinkStatus] = {
+        lender_key: LinkStatus.LINKED
+        for lender_key in linked_lender_keys
+    }
+    desired_status_by_lender.update(
+        {
+            lender_key: LinkStatus.PENDING
+            for lender_key in pending_lender_keys
+        }
+    )
+
+    for lender_key, lender in lender_map.items():
         result = await session.execute(
             select(CustomerLenderLink).where(
                 CustomerLenderLink.customer_id == customer.id,
@@ -391,15 +439,22 @@ async def _ensure_customer_links(
             )
         )
         link = result.scalar_one_or_none()
+        desired_status = desired_status_by_lender.get(lender_key)
+
+        if desired_status is None:
+            if link is not None and link.status != LinkStatus.UNLINKED:
+                link.status = LinkStatus.UNLINKED
+            continue
+
         if link is None:
             link = CustomerLenderLink(
                 customer_id=customer.id,
                 lender_id=lender.id,
-                status=LinkStatus.LINKED,
+                status=desired_status,
             )
             session.add(link)
         else:
-            link.status = LinkStatus.LINKED
+            link.status = desired_status
 
 
 async def _upsert_lender_accounts(
@@ -931,14 +986,29 @@ async def run_startup_seed() -> None:
                 session, user_data, lender_map
             )
 
-        customer_user = user_map["cliente@opticredit.app"]
-        customer = await _upsert_customer_profile(
-            session,
-            customer_user=customer_user,
-            default_lender=lender_map["opticredit"],
-        )
+        customer_documents = {
+            "cliente@opticredit.app": "40200000003",
+            "cliente.solicitud@opticredit.app": "40200000004",
+        }
+        customer_map: dict[str, Customer] = {}
+        for email, associations in CUSTOMER_ASSOCIATIONS_BY_EMAIL.items():
+            customer_user = user_map[email]
+            customer = await _upsert_customer_profile(
+                session,
+                customer_user=customer_user,
+                default_lender=lender_map["opticredit"],
+                document_number=customer_documents[email],
+            )
+            customer_map[email] = customer
+            await _ensure_customer_links(
+                session,
+                customer,
+                lender_map,
+                linked_lender_keys=associations.get("linked", []),
+                pending_lender_keys=associations.get("pending", []),
+            )
 
-        await _ensure_customer_links(session, customer, lender_map)
+        customer = customer_map["cliente@opticredit.app"]
 
         for lender_key, accounts in LENDER_ACCOUNTS.items():
             await _upsert_lender_accounts(session, lender_map[lender_key], accounts)
