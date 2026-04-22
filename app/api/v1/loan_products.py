@@ -10,6 +10,7 @@ from sqlalchemy import select, func
 from app.db.session import get_db
 from app.models.lender import Lender
 from app.models.lender import LenderBankAccount
+from app.models.loan_product import LoanProduct
 from app.models.user import User
 from app.models.customer import Customer
 from app.models.customer_lender_link import CustomerLenderLink
@@ -189,24 +190,93 @@ async def list_loan_products(
 
     items = []
     for lender in lenders:
+        name = lender.commercial_name or lender.legal_name
         lender_type = (
             lender.lender_type.value
             if hasattr(lender.lender_type, "value")
             else str(lender.lender_type)
         )
+
+        db_products_result = await session.execute(
+            select(LoanProduct)
+            .where(
+                LoanProduct.lender_id == lender.id,
+                LoanProduct.is_active.is_(True),
+            )
+            .order_by(LoanProduct.sort_order.asc(), LoanProduct.created_at.asc())
+        )
+        db_products = db_products_result.scalars().all()
+
+        if db_products:
+            for product in db_products:
+                # Filter by search
+                if search:
+                    search_lower = search.lower()
+                    if (
+                        search_lower not in name.lower()
+                        and search_lower not in product.name.lower()
+                        and search_lower not in product.description.lower()
+                        and search_lower not in product.tier.lower()
+                    ):
+                        continue
+
+                # Apply filters
+                if min_amount and float(product.max_amount) < min_amount:
+                    continue
+                if max_amount and float(product.min_amount) > max_amount:
+                    continue
+                if min_installments and product.max_installments < min_installments:
+                    continue
+                if max_installments and product.min_installments > max_installments:
+                    continue
+
+                example_amount = float(product.example_amount)
+                example_payment = float(product.example_monthly_payment)
+                if example_amount <= 0:
+                    example_amount = min(float(product.max_amount), 50000)
+                if example_payment <= 0:
+                    example_months = min(product.max_installments, 24)
+                    example_payment = _calculate_monthly_payment(
+                        example_amount,
+                        float(product.annual_interest_rate),
+                        example_months,
+                    )
+
+                items.append(
+                    LoanProductItem(
+                        id=str(product.id),
+                        lender=LoanProductLender(
+                            id=str(lender.id),
+                            name=name,
+                            type=lender_type,
+                            logo_url=None,
+                        ),
+                        name=product.name,
+                        description=product.description,
+                        tier=product.tier,
+                        min_amount=float(product.min_amount),
+                        max_amount=float(product.max_amount),
+                        min_installments=product.min_installments,
+                        max_installments=product.max_installments,
+                        annual_interest_rate=float(product.annual_interest_rate),
+                        example_amount=example_amount,
+                        example_monthly_payment=example_payment,
+                        is_featured=bool(product.is_featured),
+                    )
+                )
+            continue
+
+        # Fallback to default generated catalog only when lender has no configured products.
         product_config = DEFAULT_PRODUCTS.get(
             lender_type, DEFAULT_PRODUCTS["individual"]
         )
-
-        name = lender.commercial_name or lender.legal_name
-
         tiered_products = _build_tiered_products(product_config)
-
         for tier_idx, tier_cfg in enumerate(tiered_products):
             product_name = f"{name} {tier_cfg['tier']}"
-            product_description = f"{product_config['description']}. {tier_cfg['description_suffix']}."
+            product_description = (
+                f"{product_config['description']}. {tier_cfg['description_suffix']}."
+            )
 
-            # Filter by search
             if search:
                 search_lower = search.lower()
                 if (
@@ -216,7 +286,6 @@ async def list_loan_products(
                 ):
                     continue
 
-            # Apply filters
             if min_amount and tier_cfg["max_amount"] < min_amount:
                 continue
             if max_amount and tier_cfg["min_amount"] > max_amount:
@@ -343,22 +412,46 @@ async def request_custom_loan(
     if link_result.scalar_one_or_none() is None:
         raise ForbiddenException("No active association with this lender")
 
-    lender_type = (
-        lender.lender_type.value
-        if hasattr(lender.lender_type, "value")
-        else str(lender.lender_type)
+    db_products_result = await session.execute(
+        select(LoanProduct)
+        .where(
+            LoanProduct.lender_id == lender.id,
+            LoanProduct.is_active.is_(True),
+        )
+        .order_by(LoanProduct.sort_order.asc(), LoanProduct.created_at.asc())
     )
-    base_product = DEFAULT_PRODUCTS.get(lender_type, DEFAULT_PRODUCTS["individual"])
-    tiered_products = _build_tiered_products(base_product)
+    db_products = db_products_result.scalars().all()
 
-    selected_rate = tiered_products[1]["annual_interest_rate"]
-    for tier_cfg in tiered_products:
-        if (
-            tier_cfg["min_amount"] <= request.requested_amount <= tier_cfg["max_amount"]
-            and tier_cfg["min_installments"] <= request.requested_installments_count <= tier_cfg["max_installments"]
-        ):
-            selected_rate = tier_cfg["annual_interest_rate"]
-            break
+    if db_products:
+        matching_products = [
+            p
+            for p in db_products
+            if float(p.min_amount) <= request.requested_amount <= float(p.max_amount)
+            and p.min_installments
+            <= request.requested_installments_count
+            <= p.max_installments
+        ]
+        selected_rate = (
+            float(matching_products[0].annual_interest_rate)
+            if matching_products
+            else float(db_products[0].annual_interest_rate)
+        )
+    else:
+        lender_type = (
+            lender.lender_type.value
+            if hasattr(lender.lender_type, "value")
+            else str(lender.lender_type)
+        )
+        base_product = DEFAULT_PRODUCTS.get(lender_type, DEFAULT_PRODUCTS["individual"])
+        tiered_products = _build_tiered_products(base_product)
+        selected_rate = tiered_products[1]["annual_interest_rate"]
+        for tier_cfg in tiered_products:
+            if (
+                tier_cfg["min_amount"] <= request.requested_amount <= tier_cfg["max_amount"]
+                and tier_cfg["min_installments"] <= request.requested_installments_count <= tier_cfg["max_installments"]
+            ):
+                selected_rate = tier_cfg["annual_interest_rate"]
+                break
 
     service = LoanApplicationService(session)
     created = await service.create_application(

@@ -14,6 +14,7 @@ from app.models.customer import Customer
 from app.models.lender import Lender
 from app.models.lender import LenderBankAccount
 from app.models.customer_lender_link import CustomerLenderLink
+from app.models.loan_application import LoanApplicationStatus
 from app.core.enums import LenderStatus, LinkStatus
 from app.repositories.customer_repo import CustomerRepository
 from app.repositories.loan_repo import LoanRepository, InstallmentRepository
@@ -547,15 +548,33 @@ async def get_my_loan_detail(
 
 @router.get("/loan-applications")
 async def get_my_loan_applications(
-    status: str | None = Query(default=None),
+    status_filter: str | None = Query(default=None, alias="status"),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
     customer: Customer = Depends(get_current_customer),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Get all loan applications for the authenticated customer."""
+    normalized_status: str | None = None
+    if status_filter:
+        status_value = status_filter.strip().lower()
+        if status_value == "pending":
+            status_value = LoanApplicationStatus.SUBMITTED.value
+        valid_statuses = {item.value for item in LoanApplicationStatus}
+        if status_value not in valid_statuses:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=get_error_response(
+                    ErrorCode.VALIDATION_ERROR,
+                    f"Estado inválido: {status_filter}",
+                ),
+            )
+        normalized_status = status_value
+
     app_repo = LoanApplicationRepository(session)
-    applications = await app_repo.get_by_customer(str(customer.id), status=status)
+    applications = await app_repo.get_by_customer(
+        str(customer.id), status=normalized_status
+    )
 
     total = len(applications)
     items = applications[skip : skip + limit]
@@ -564,16 +583,15 @@ async def get_my_loan_applications(
         "items": [
             {
                 "id": str(app.id),
-                "application_number": app.purpose or f"APP-{app.id.hex[:8].upper()}",
-                "status": app.status.value,
+                "application_number": app.purpose
+                or f"APP-{str(app.id).replace('-', '')[:8].upper()}",
+                "status": getattr(app.status, "value", str(app.status)),
                 "requested_amount": float(app.requested_amount),
-                "approved_amount": float(app.approved_amount)
-                if app.approved_amount
-                else None,
+                "approved_amount": None,
                 "submitted_at": app.created_at.isoformat(),
                 "reviewed_at": app.reviewed_at.isoformat() if app.reviewed_at else None,
                 "rejection_reason": app.review_notes
-                if app.status.value == "rejected"
+                if getattr(app.status, "value", str(app.status)) == "rejected"
                 else None,
             }
             for app in items

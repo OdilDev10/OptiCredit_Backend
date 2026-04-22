@@ -14,6 +14,7 @@ from app.models.loan_application import (
     LoanApplicationStatus,
     LoanFrequency,
 )
+from app.models.customer import Customer
 from app.models.customer_lender_link import CustomerLenderLink
 from app.core.enums import LinkStatus
 from app.core.exceptions import (
@@ -315,14 +316,28 @@ class LoanApplicationService:
         applications = await self.repo.get_by_lender(lender_id, status_enum)
         applications = applications[:limit]
 
+        customer_ids = [app.customer_id for app in applications]
+        customers_by_id: dict[str, Customer] = {}
+        if customer_ids:
+            customers_result = await self.session.execute(
+                select(Customer).where(Customer.id.in_(customer_ids))
+            )
+            customers = customers_result.scalars().all()
+            customers_by_id = {str(customer.id): customer for customer in customers}
+
         items = []
         for app in applications:
-            customer = await self.customer_repo.get_or_404(app.customer_id)
+            customer = customers_by_id.get(str(app.customer_id))
+            customer_name = (
+                f"{customer.first_name} {customer.last_name}".strip()
+                if customer
+                else "Cliente"
+            )
             items.append(
                 {
                     "application_id": str(app.id),
                     "customer_id": str(app.customer_id),
-                    "customer_name": f"{customer.first_name} {customer.last_name}".strip(),
+                    "customer_name": customer_name,
                     "requested_amount": float(app.requested_amount),
                     "requested_interest_rate": float(app.requested_interest_rate),
                     "requested_installments_count": app.requested_installments_count,

@@ -11,6 +11,7 @@ from sqlalchemy import and_, select
 
 # Ensure all ORM models are registered before querying.
 from app.db import base as _base  # noqa: F401
+from app.config import settings
 from app.db.session import AsyncSessionFactory
 from app.core.enums import (
     AccountType,
@@ -155,12 +156,12 @@ SEED_USERS: list[dict[str, Any]] = [
         "lender_key": "opticredit",
     },
     {
-        "email": "reviewer@opticredit.app",
+        "email": "agent@opticredit.app",
         "first_name": "Laura",
         "last_name": "Nunez",
         "phone": "8090000002",
         "account_type": AccountType.INTERNAL,
-        "role": UserRole.REVIEWER,
+        "role": UserRole.AGENT,
         "status": UserStatus.ACTIVE,
         "lender_key": "opticredit",
     },
@@ -617,6 +618,12 @@ async def _upsert_seed_payment(
     if voucher_status is None:
         return
 
+    def _seed_voucher_public_url(seed_hash: str) -> str:
+        public_base = settings.r2_public_url.strip().rstrip("/")
+        if public_base:
+            return f"{public_base}/vouchers/seed/{seed_hash}.jpg"
+        return f"https://placehold.co/1200x800.jpg?text={seed_hash}"
+
     image_hash = f"seed-{marker.lower().replace(':', '-')}"
     voucher_result = await session.execute(
         select(Voucher).where(Voucher.image_hash == image_hash)
@@ -624,7 +631,7 @@ async def _upsert_seed_payment(
     voucher = voucher_result.scalar_one_or_none()
     voucher_values = {
         "payment_id": payment.id,
-        "original_file_url": f"/uploads/vouchers/{image_hash}.jpg",
+        "original_file_url": _seed_voucher_public_url(image_hash),
         "processed_file_url": None,
         "mime_type": "image/jpeg",
         "file_size_bytes": "153600",

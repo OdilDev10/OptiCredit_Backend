@@ -516,15 +516,54 @@ class DashboardService:
                 if loan.installments_count > 0
                 else 0.0
             )
+            installments_result = await self.session.execute(
+                select(Installment).where(Installment.loan_id == loan.id)
+            )
+            installments = installments_result.scalars().all()
+
+            paid_amount = sum(float(inst.amount_paid or 0) for inst in installments)
+            balance_amount = max(0.0, float(loan.total_amount) - paid_amount)
+
+            overdue_installments = [
+                inst
+                for inst in installments
+                if inst.status == InstallmentStatus.OVERDUE
+            ]
+            overdue_count = len(overdue_installments)
+            overdue_amount = sum(
+                max(0.0, float(inst.amount_due or 0) - float(inst.amount_paid or 0))
+                for inst in overdue_installments
+            )
+
+            oldest_overdue_date = (
+                min((inst.due_date for inst in overdue_installments), default=None)
+                if overdue_installments
+                else None
+            )
+            overdue_months = 0
+            if oldest_overdue_date is not None:
+                today = datetime.utcnow().date()
+                overdue_months = max(
+                    0,
+                    (today.year - oldest_overdue_date.year) * 12
+                    + (today.month - oldest_overdue_date.month),
+                )
             items.append(
                 {
                     "id": str(loan.id),
                     "loan_number": loan.loan_number,
                     "principal_amount": float(loan.principal_amount),
                     "total_amount": float(loan.total_amount),
+                    "balance_amount": balance_amount,
                     "installment_amount": installment_amount,
                     "installments_count": loan.installments_count,
                     "status": loan.status.value,
+                    "overdue_installments_count": overdue_count,
+                    "overdue_amount": overdue_amount,
+                    "oldest_overdue_date": oldest_overdue_date.isoformat()
+                    if oldest_overdue_date
+                    else None,
+                    "overdue_months": overdue_months,
                     "created_at": loan.created_at,
                 }
             )
