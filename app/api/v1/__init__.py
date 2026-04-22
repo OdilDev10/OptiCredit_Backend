@@ -25,6 +25,7 @@ from app.api.v1.admin_users import router as admin_users_router
 from app.api.v1.lender_settings import router as lender_settings_router
 from app.api.v1.client_settings import router as client_settings_router
 from app.api.v1.loan_products import router as loan_products_router
+from app.api.v1.lender_products import router as lender_products_router
 from app.api.v1.payment_with_voucher import router as payment_with_voucher_router
 from app.api.v1.support import router as support_router
 from app.api.v1.audit_logs import router as audit_logs_router
@@ -54,6 +55,7 @@ api_router.include_router(admin_users_router)
 api_router.include_router(lender_settings_router)
 api_router.include_router(client_settings_router)
 api_router.include_router(loan_products_router)
+api_router.include_router(lender_products_router)
 api_router.include_router(payment_with_voucher_router)
 api_router.include_router(support_router)
 api_router.include_router(audit_logs_router)

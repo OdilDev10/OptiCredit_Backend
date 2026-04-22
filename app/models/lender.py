@@ -39,6 +39,7 @@ class Lender(Base, BaseModel):
         Enum(LenderStatus), default=LenderStatus.PENDING
     )
     subscription_plan: Mapped[Optional[str]] = mapped_column(String(50))
+    rejection_reason: Mapped[Optional[str]] = mapped_column(String(500))
     subscription_starts_at: Mapped[Optional[datetime]] = mapped_column(Date)
     subscription_ends_at: Mapped[Optional[datetime]] = mapped_column(Date)
 

@@ -13,7 +13,9 @@ class LoanApplicationRepository(BaseRepository[LoanApplication]):
     def __init__(self, session: AsyncSession):
         super().__init__(session, LoanApplication)
 
-    async def get_by_lender(self, lender_id: str, status: Optional[LoanApplicationStatus] = None) -> list[LoanApplication]:
+    async def get_by_lender(
+        self, lender_id: str, status: Optional[LoanApplicationStatus] = None
+    ) -> list[LoanApplication]:
         """Get all applications for a lender."""
         query = select(LoanApplication).where(LoanApplication.lender_id == lender_id)
         if status:
@@ -22,32 +24,59 @@ class LoanApplicationRepository(BaseRepository[LoanApplication]):
         result = await self.session.execute(query)
         return result.scalars().all()
 
-    async def get_by_customer_and_lender(self, customer_id: str, lender_id: str) -> list[LoanApplication]:
+    async def get_by_customer_and_lender(
+        self, customer_id: str, lender_id: str
+    ) -> list[LoanApplication]:
         """Get all applications for a customer from a specific lender."""
-        query = select(LoanApplication).where(
-            and_(
-                LoanApplication.customer_id == customer_id,
-                LoanApplication.lender_id == lender_id,
+        query = (
+            select(LoanApplication)
+            .where(
+                and_(
+                    LoanApplication.customer_id == customer_id,
+                    LoanApplication.lender_id == lender_id,
+                )
             )
-        ).order_by(desc(LoanApplication.created_at))
+            .order_by(desc(LoanApplication.created_at))
+        )
+        result = await self.session.execute(query)
+        return result.scalars().all()
+
+    async def get_by_customer(
+        self, customer_id: str, status: Optional[str] = None
+    ) -> list[LoanApplication]:
+        """Get all applications for a customer."""
+        query = select(LoanApplication).where(
+            LoanApplication.customer_id == customer_id
+        )
+        if status:
+            query = query.where(LoanApplication.status == status)
+        query = query.order_by(desc(LoanApplication.created_at))
         result = await self.session.execute(query)
         return result.scalars().all()
 
     async def get_pending_review(self, lender_id: str) -> list[LoanApplication]:
         """Get applications pending review for a lender."""
-        query = select(LoanApplication).where(
-            and_(
-                LoanApplication.lender_id == lender_id,
-                LoanApplication.status == LoanApplicationStatus.UNDER_REVIEW,
+        query = (
+            select(LoanApplication)
+            .where(
+                and_(
+                    LoanApplication.lender_id == lender_id,
+                    LoanApplication.status == LoanApplicationStatus.UNDER_REVIEW,
+                )
             )
-        ).order_by(LoanApplication.created_at)
+            .order_by(LoanApplication.created_at)
+        )
         result = await self.session.execute(query)
         return result.scalars().all()
 
-    async def count_by_lender(self, lender_id: str, status: Optional[LoanApplicationStatus] = None) -> int:
+    async def count_by_lender(
+        self, lender_id: str, status: Optional[LoanApplicationStatus] = None
+    ) -> int:
         """Count applications for a lender."""
         query = select(LoanApplication).where(LoanApplication.lender_id == lender_id)
         if status:
             query = query.where(LoanApplication.status == status)
-        result = await self.session.execute(select(LoanApplication).where(LoanApplication.lender_id == lender_id))
+        result = await self.session.execute(
+            select(LoanApplication).where(LoanApplication.lender_id == lender_id)
+        )
         return len(result.scalars().all())

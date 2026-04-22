@@ -332,6 +332,57 @@ async def seed_database():
             )
             session.add(notif1)
 
+            lender_pending_1 = Lender(
+                id=uuid4(),
+                legal_name="Cooperativa Nacional de Ahorros y Préstamos",
+                commercial_name="CoopNacional",
+                lender_type=LenderType.FINANCIAL,
+                document_type="rnc",
+                document_number="50123456789",
+                email="contacto@coopnacional.com",
+                phone="+1-809-555-0300",
+                status=LenderStatus.PENDING,
+                subscription_plan="professional",
+                rejection_reason=None,
+                created_at=datetime.now(timezone.utc) - timedelta(days=2),
+                updated_at=datetime.now(timezone.utc) - timedelta(days=2),
+            )
+            session.add(lender_pending_1)
+
+            lender_pending_2 = Lender(
+                id=uuid4(),
+                legal_name="Préstamos Rápidos del Caribe SRL",
+                commercial_name="PrestCaribe",
+                lender_type=LenderType.INDIVIDUAL,
+                document_type="cedula",
+                document_number="13123456789",
+                email="admin@prestcaribe.com",
+                phone="+1-809-555-0400",
+                status=LenderStatus.PENDING,
+                subscription_plan="basic",
+                rejection_reason=None,
+                created_at=datetime.now(timezone.utc) - timedelta(days=1),
+                updated_at=datetime.now(timezone.utc) - timedelta(days=1),
+            )
+            session.add(lender_pending_2)
+
+            lender_rejected = Lender(
+                id=uuid4(),
+                legal_name="Financiera Express优先 SRL",
+                commercial_name="FinExpress",
+                lender_type=LenderType.FINANCIAL,
+                document_type="rnc",
+                document_number="50198765432",
+                email="info@finexpress.com",
+                phone="+1-809-555-0500",
+                status=LenderStatus.REJECTED,
+                subscription_plan="enterprise",
+                rejection_reason="Documentación incompleta: falta certificado de registro mercantil y referencias bancarias.",
+                created_at=datetime.now(timezone.utc) - timedelta(days=5),
+                updated_at=datetime.now(timezone.utc) - timedelta(days=3),
+            )
+            session.add(lender_rejected)
+
             await session.commit()
 
             print("\n[OK] Database seeded successfully!")
@@ -344,6 +395,13 @@ async def seed_database():
             print("   - luis.fernandez@email.com / Cliente@12345 (CUSTOMER)")
             print("\n   4 loans created with installments")
             print("   5 customers created")
+            print("\n   PENDING LENDERS (para aprobar en admin):")
+            print("   - CoopNacional (contacto@coopnacional.com)")
+            print("   - PrestCaribe (admin@prestcaribe.com)")
+            print("\n   REJECTED LENDER (reintentar registro):")
+            print(
+                "   - FinExpress (info@finexpress.com) - info@finexpress.com / Cliente@12345"
+            )
 
         except Exception as e:
             await session.rollback()

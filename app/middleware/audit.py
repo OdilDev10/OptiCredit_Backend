@@ -93,6 +93,38 @@ def get_user_info_from_authorization_header(
     return user_id, (str(email) if email else None), full_name, lender_id
 
 
+async def get_login_user_info_from_request(
+    request: Request,
+) -> tuple[UUID | None, str | None, str | None, UUID | None]:
+    """Extract login user metadata from request body for /auth/login."""
+    if request.url.path != "/api/v1/auth/login":
+        return None, None, None, None
+
+    try:
+        body = await request.body()
+        if not body:
+            return None, None, None, None
+        payload = json.loads(body.decode("utf-8") if isinstance(body, bytes) else body)
+        email = payload.get("email")
+        if email:
+            return None, str(email), None, None
+    except Exception:
+        pass
+    return None, None, None, None
+
+
+def get_login_user_info_cached(
+    request: Request,
+) -> tuple[UUID | None, str | None, str | None, UUID | None]:
+    """Get cached login info from request state (captured before body was consumed)."""
+    if request.url.path != "/api/v1/auth/login":
+        return None, None, None, None
+    email = getattr(request.state, "_login_email", None)
+    if email:
+        return None, str(email), None, None
+    return None, None, None, None
+
+
 def get_login_user_info_from_response(
     path: str, response: Response
 ) -> tuple[UUID | None, str | None, str | None, UUID | None]:
@@ -167,14 +199,25 @@ class AuditMiddleware(BaseHTTPMiddleware):
         if method not in AUDITABLE_METHODS:
             return await call_next(request)
 
+        if path == "/api/v1/auth/login":
+            try:
+                body = await request.body()
+                if body:
+                    payload = json.loads(
+                        body.decode("utf-8") if isinstance(body, bytes) else body
+                    )
+                    email = payload.get("email")
+                    if email:
+                        request.state._login_email = email
+            except Exception:
+                pass
+
         response = await call_next(request)
 
         if response.status_code >= 400:
             return response
 
-        user_id, user_email, user_name, lender_id = await get_user_info_from_request(
-            request
-        )
+        user_id, user_email, user_name, lender_id = get_login_user_info_cached(request)
 
         if user_id is None and hasattr(request.state, "current_user"):
             cu = request.state.current_user
@@ -193,15 +236,21 @@ class AuditMiddleware(BaseHTTPMiddleware):
             )
 
         if user_id is None and path == "/api/v1/auth/login":
-            user_id, user_email, user_name, lender_id = get_login_user_info_from_response(
-                path, response
-            )
+            login_info = get_login_user_info_cached(request)
+            if login_info[1]:
+                user_id, user_email, user_name, lender_id = login_info
+            else:
+                user_id, user_email, user_name, lender_id = (
+                    get_login_user_info_from_response(path, response)
+                )
 
         ip_address = get_client_ip(request)
         ua = request.headers.get("user-agent")
         user_agent = ua[:500] if ua else None
 
-        resource_type, action = AUDITABLE_PATHS.get(path, extract_resource(path, method))
+        resource_type, action = AUDITABLE_PATHS.get(
+            path, extract_resource(path, method)
+        )
 
         if resource_type in ("health", "docs", "openapi", "redoc"):
             return response

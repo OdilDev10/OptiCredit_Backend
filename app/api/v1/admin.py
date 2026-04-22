@@ -263,6 +263,7 @@ async def reject_lender(
         raise NotFoundException("Lender not found")
 
     lender.status = LenderStatus.REJECTED
+    lender.rejection_reason = request.reason
     await session.commit()
     return {"message": f"Lender rejected: {request.reason}"}
 

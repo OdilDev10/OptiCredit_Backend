@@ -17,6 +17,7 @@ from app.models.customer_lender_link import CustomerLenderLink
 from app.core.enums import LenderStatus, LinkStatus
 from app.repositories.customer_repo import CustomerRepository
 from app.repositories.loan_repo import LoanRepository, InstallmentRepository
+from app.repositories.loan_application_repo import LoanApplicationRepository
 from app.repositories.payment_repo import (
     PaymentRepository,
     VoucherRepository,
@@ -541,6 +542,45 @@ async def get_my_loan_detail(
             for inst in installments
         ],
         "created_at": loan.created_at.isoformat(),
+    }
+
+
+@router.get("/loan-applications")
+async def get_my_loan_applications(
+    status: str | None = Query(default=None),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+    customer: Customer = Depends(get_current_customer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    """Get all loan applications for the authenticated customer."""
+    app_repo = LoanApplicationRepository(session)
+    applications = await app_repo.get_by_customer(str(customer.id), status=status)
+
+    total = len(applications)
+    items = applications[skip : skip + limit]
+
+    return {
+        "items": [
+            {
+                "id": str(app.id),
+                "application_number": app.purpose or f"APP-{app.id.hex[:8].upper()}",
+                "status": app.status.value,
+                "requested_amount": float(app.requested_amount),
+                "approved_amount": float(app.approved_amount)
+                if app.approved_amount
+                else None,
+                "submitted_at": app.created_at.isoformat(),
+                "reviewed_at": app.reviewed_at.isoformat() if app.reviewed_at else None,
+                "rejection_reason": app.review_notes
+                if app.status.value == "rejected"
+                else None,
+            }
+            for app in items
+        ],
+        "total": total,
+        "skip": skip,
+        "limit": limit,
     }
 
 

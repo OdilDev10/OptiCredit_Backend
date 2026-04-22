@@ -161,14 +161,18 @@ async def get_recent_activity(
 
 @router.get("/top-lenders")
 async def get_top_lenders_by_portfolio(
-    limit: int = Query(default=10, ge=1, le=50),
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=5, ge=1, le=20),
     _: User = Depends(require_roles("platform_admin")),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Get top lenders by portfolio size."""
+    """Get top lenders by portfolio size with pagination."""
+
+    count_result = await session.execute(select(func.count(Lender.id)))
+    total = count_result.scalar() or 0
 
     result = await session.execute(
-        select(Lender).order_by(desc(Lender.created_at)).limit(limit)
+        select(Lender).order_by(desc(Lender.created_at)).offset(skip).limit(limit)
     )
     lenders = result.scalars().all()
 
@@ -198,4 +202,4 @@ async def get_top_lenders_by_portfolio(
             }
         )
 
-    return {"lenders": items}
+    return {"lenders": items, "total": total, "skip": skip, "limit": limit}

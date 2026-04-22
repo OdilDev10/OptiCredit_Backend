@@ -102,6 +102,7 @@ class AuditLogItem(BaseModel):
     id: str
     user_email: str | None
     user_name: str | None
+    user_type: str | None
     action: str
     resource_type: str
     resource_id: str | None
@@ -144,6 +145,7 @@ async def get_audit_logs(
                 id=str(log.id),
                 user_email=log.user_email,
                 user_name=log.user_name,
+                user_type="lender" if log.lender_id else "admin",
                 action=log.action,
                 resource_type=log.resource_type,
                 resource_id=log.resource_id,
