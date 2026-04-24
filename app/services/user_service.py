@@ -6,11 +6,17 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import UserRole, UserStatus
-from app.core.exceptions import ConflictException, ValidationException, NotFoundException
+from app.core.exceptions import (
+    ConflictException,
+    ValidationException,
+    NotFoundException,
+)
 from app.core.security import hash_password
 from app.models.user import User
+from app.models.lender import Lender
 from app.repositories.user_repo import UserRepository
 from app.services.email_service import email_service
+from app.services.notifications import NotificationDispatcher
 
 
 class UserService:
@@ -87,6 +93,21 @@ class UserService:
         self.session.add(user)
         await self.session.flush()
 
+        try:
+            dispatcher = NotificationDispatcher(self.session)
+            lender = await self.session.get(Lender, lender_id) if lender_id else None
+            lender_name = (
+                lender.commercial_name
+                if lender and lender.commercial_name
+                else "OptiCredit"
+            )
+            await dispatcher.notify_user_created(
+                user_id=user.id,
+                lender_name=lender_name,
+            )
+        except Exception:
+            pass
+
         return user
 
     async def get_user(self, user_id: UUID) -> User:
@@ -130,11 +151,23 @@ class UserService:
 
     async def activate_user(self, user_id: UUID) -> User:
         """Activate an inactive user."""
-        return await self.update_user_status(user_id, UserStatus.ACTIVE)
+        user = await self.update_user_status(user_id, UserStatus.ACTIVE)
+        try:
+            dispatcher = NotificationDispatcher(self.session)
+            await dispatcher.notify_user_enabled(user_id)
+        except Exception:
+            pass
+        return user
 
     async def deactivate_user(self, user_id: UUID) -> User:
         """Deactivate (block) a user."""
-        return await self.update_user_status(user_id, UserStatus.BLOCKED)
+        user = await self.update_user_status(user_id, UserStatus.BLOCKED)
+        try:
+            dispatcher = NotificationDispatcher(self.session)
+            await dispatcher.notify_user_disabled(user_id)
+        except Exception:
+            pass
+        return user
 
     async def update_last_login(self, user_id: UUID) -> User:
         """Update last login timestamp."""

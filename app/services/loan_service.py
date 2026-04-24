@@ -5,13 +5,31 @@ from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.repositories.loan_repo import LoanRepository, InstallmentRepository, DisbursementRepository
+from app.repositories.loan_repo import (
+    LoanRepository,
+    InstallmentRepository,
+    DisbursementRepository,
+)
 from app.repositories.loan_application_repo import LoanApplicationRepository
 from app.repositories.customer_repo import CustomerRepository
-from app.models.loan import Loan, Installment, Disbursement, LoanStatus, InstallmentStatus, DisbursementStatus
+from app.models.loan import (
+    Loan,
+    Installment,
+    Disbursement,
+    LoanStatus,
+    InstallmentStatus,
+    DisbursementStatus,
+)
 from app.models.loan_application import LoanApplicationStatus
-from app.core.exceptions import ValidationException, NotFoundException, ForbiddenException
+from app.models.customer import Customer
+from app.models.lender import Lender
+from app.core.exceptions import (
+    ValidationException,
+    NotFoundException,
+    ForbiddenException,
+)
 from app.core.utils import generate_installment_schedule
+from app.services.notifications import NotificationDispatcher
 
 
 class LoanService:
@@ -38,10 +56,14 @@ class LoanService:
         application = await self.application_repo.get_or_404(application_id)
 
         if application.lender_id != lender_id:
-            raise ForbiddenException("Not authorized to create loan from this application")
+            raise ForbiddenException(
+                "Not authorized to create loan from this application"
+            )
 
         if application.status != LoanApplicationStatus.APPROVED:
-            raise ValidationException(f"Application must be approved, current status: {application.status}")
+            raise ValidationException(
+                f"Application must be approved, current status: {application.status}"
+            )
 
         # Check application hasn't been used already
         existing_loan = await self.loan_repo.get_by_application_id(application_id)
@@ -65,24 +87,26 @@ class LoanService:
         total_amount = principal + total_interest
 
         # Create loan
-        loan = await self.loan_repo.create({
-            "lender_id": lender_id,
-            "customer_id": application.customer_id,
-            "loan_application_id": application_id,
-            "loan_number": loan_number,
-            "principal_amount": principal,
-            "interest_rate": interest_rate,
-            "interest_type": "fixed",
-            "total_interest_amount": total_interest,
-            "total_amount": total_amount,
-            "installments_count": installments_count,
-            "frequency": frequency,
-            "first_due_date": first_due_date,
-            "status": LoanStatus.APPROVED,
-            "approved_by": approved_by_user_id,
-            "approved_at": datetime.now(timezone.utc),
-            "internal_notes": internal_notes,
-        })
+        loan = await self.loan_repo.create(
+            {
+                "lender_id": lender_id,
+                "customer_id": application.customer_id,
+                "loan_application_id": application_id,
+                "loan_number": loan_number,
+                "principal_amount": principal,
+                "interest_rate": interest_rate,
+                "interest_type": "fixed",
+                "total_interest_amount": total_interest,
+                "total_amount": total_amount,
+                "installments_count": installments_count,
+                "frequency": frequency,
+                "first_due_date": first_due_date,
+                "status": LoanStatus.APPROVED,
+                "approved_by": approved_by_user_id,
+                "approved_at": datetime.now(timezone.utc),
+                "internal_notes": internal_notes,
+            }
+        )
 
         # Generate installment schedule
         await self._generate_installments(
@@ -126,15 +150,17 @@ class LoanService:
         )
 
         for installment_data in schedule:
-            await self.installment_repo.create({
-                "loan_id": loan.id,
-                "installment_number": installment_data["number"],
-                "due_date": installment_data["due_date"],
-                "principal_component": Decimal(str(installment_data["principal"])),
-                "interest_component": Decimal(str(installment_data["interest"])),
-                "amount_due": Decimal(str(installment_data["amount"])),
-                "status": InstallmentStatus.PENDING,
-            })
+            await self.installment_repo.create(
+                {
+                    "loan_id": loan.id,
+                    "installment_number": installment_data["number"],
+                    "due_date": installment_data["due_date"],
+                    "principal_component": Decimal(str(installment_data["principal"])),
+                    "interest_component": Decimal(str(installment_data["interest"])),
+                    "amount_due": Decimal(str(installment_data["amount"])),
+                    "status": InstallmentStatus.PENDING,
+                }
+            )
 
     async def create_disbursement(
         self,
@@ -167,27 +193,50 @@ class LoanService:
             raise ValidationException("Loan already has a completed disbursement")
 
         # Create disbursement
-        disbursement = await self.disbursement_repo.create({
-            "loan_id": loan_id,
-            "amount": amount,
-            "method": method,
-            "bank_name": bank_name,
-            "reference_number": reference_number,
-            "receipt_url": receipt_url,
-            "status": DisbursementStatus.COMPLETED,
-            "created_by": created_by_user_id,
-            "disbursed_at": datetime.utcnow(),
-        })
+        disbursement = await self.disbursement_repo.create(
+            {
+                "loan_id": loan_id,
+                "amount": amount,
+                "method": method,
+                "bank_name": bank_name,
+                "reference_number": reference_number,
+                "receipt_url": receipt_url,
+                "status": DisbursementStatus.COMPLETED,
+                "created_by": created_by_user_id,
+                "disbursed_at": datetime.utcnow(),
+            }
+        )
 
         # Update loan status
         loan.status = LoanStatus.ACTIVE
         loan.disbursement_date = date.today()
-        await self.loan_repo.update(loan, {
-            "status": LoanStatus.ACTIVE,
-            "disbursement_date": date.today(),
-        })
+        await self.loan_repo.update(
+            loan,
+            {
+                "status": LoanStatus.ACTIVE,
+                "disbursement_date": date.today(),
+            },
+        )
 
         await self.session.commit()
+
+        try:
+            customer = await self.session.get(Customer, loan.customer_id)
+            if customer and customer.user_id:
+                lender = await self.session.get(Lender, loan.lender_id)
+                lender_name = (
+                    lender.commercial_name
+                    if lender and lender.commercial_name
+                    else "Tu prestamista"
+                )
+                dispatcher = NotificationDispatcher(self.session)
+                await dispatcher.notify_loan_disbursed(
+                    customer_user_id=customer.user_id,
+                    amount=float(amount),
+                    lender_name=lender_name,
+                )
+        except Exception:
+            pass
 
         return {
             "disbursement_id": str(disbursement.id),
@@ -222,7 +271,9 @@ class LoanService:
             "frequency": loan.frequency,
             "status": loan.status.value,
             "first_due_date": loan.first_due_date.isoformat(),
-            "disbursement_date": loan.disbursement_date.isoformat() if loan.disbursement_date else None,
+            "disbursement_date": loan.disbursement_date.isoformat()
+            if loan.disbursement_date
+            else None,
             "installments": [
                 {
                     "number": inst.installment_number,
@@ -272,7 +323,9 @@ class LoanService:
         random_suffix = str(uuid4())[:8].upper()
         return f"LN-{lender_id[:4].upper()}-{timestamp}-{random_suffix}"
 
-    def _calculate_simple_interest(self, principal: Decimal, rate: Decimal, months: float) -> Decimal:
+    def _calculate_simple_interest(
+        self, principal: Decimal, rate: Decimal, months: float
+    ) -> Decimal:
         """Calculate simple interest: I = P * R * T / 100."""
         if not isinstance(principal, Decimal):
             principal = Decimal(str(principal))

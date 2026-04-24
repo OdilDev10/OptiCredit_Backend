@@ -1,9 +1,10 @@
 """Client settings API - profile and account management."""
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Annotated
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -48,10 +49,10 @@ class UpdateClientProfileRequest(BaseModel):
     phone: str | None = None
 
 
-@router.get("", response_model=ClientProfileResponse)
+@router.get("")
 async def get_client_settings(
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db),
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> ClientProfileResponse:
     """Get client profile information."""
     result = await session.execute(
@@ -87,8 +88,8 @@ async def get_client_settings(
 @router.put("")
 async def update_client_profile(
     request: UpdateClientProfileRequest,
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db),
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Update client profile information."""
     result = await session.execute(
@@ -101,7 +102,7 @@ async def update_client_profile(
         for field, value in update_data.items():
             if value is not None:
                 setattr(customer, field, value)
-        customer.updated_at = datetime.utcnow()
+        customer.updated_at = datetime.now(timezone.utc)
     else:
         if request.first_name:
             current_user.first_name = request.first_name
@@ -109,7 +110,7 @@ async def update_client_profile(
             current_user.last_name = request.last_name
         if request.phone:
             current_user.phone = request.phone
-        current_user.updated_at = datetime.utcnow()
+        current_user.updated_at = datetime.now(timezone.utc)
 
     await session.commit()
     return {"success": True, "message": "Profile updated"}
@@ -117,8 +118,8 @@ async def update_client_profile(
 
 @router.delete("/account")
 async def delete_client_account(
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db),
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Schedule client account deletion after business-rule checks."""
     result = await session.execute(
@@ -173,7 +174,7 @@ async def delete_client_account(
             },
         )
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     scheduled_deletion_at = now + timedelta(days=30)
 
     customer.status = CustomerStatus.BLOCKED
@@ -246,8 +247,8 @@ class DocumentResponse(BaseModel):
 
 @router.get("/documents")
 async def list_client_documents(
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db),
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """List all documents for the authenticated client."""
     customer = await get_customer_or_404(current_user, session)
@@ -280,13 +281,13 @@ async def list_client_documents(
     }
 
 
-@router.post("/documents", response_model=DocumentResponse)
+@router.post("/documents")
 async def upload_client_document(
     document_type: DocumentType,
-    file: UploadFile = File(...),
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+    file: Annotated[UploadFile, File(...)],
     bank_account_id: str | None = None,
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db),
 ) -> DocumentResponse:
     """Upload a document for the authenticated client (ID or financial document)."""
     customer = await get_customer_or_404(current_user, session)
@@ -354,8 +355,8 @@ async def upload_client_document(
 @router.delete("/documents/{document_id}")
 async def delete_client_document(
     document_id: str,
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db),
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Delete a client document."""
     customer = await get_customer_or_404(current_user, session)
@@ -415,8 +416,8 @@ def mask_account_number(number: str) -> str:
 
 @router.get("/accounts")
 async def list_client_accounts(
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db),
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """List all bank accounts for the authenticated client."""
     customer = await get_customer_or_404(current_user, session)
@@ -448,11 +449,11 @@ async def list_client_accounts(
     }
 
 
-@router.post("/accounts", response_model=BankAccountResponse)
+@router.post("/accounts")
 async def create_bank_account(
     request: CreateBankAccountRequest,
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db),
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> BankAccountResponse:
     """Create a new bank account for the authenticated client."""
     customer = await get_customer_or_404(current_user, session)
@@ -502,8 +503,8 @@ async def create_bank_account(
 @router.delete("/accounts/{account_id}")
 async def delete_bank_account(
     account_id: str,
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db),
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Delete a bank account (only if no pending disbursements)."""
     customer = await get_customer_or_404(current_user, session)
@@ -526,7 +527,7 @@ async def delete_bank_account(
         )
 
     account.status = "deleted"
-    account.updated_at = datetime.utcnow()
+    account.updated_at = datetime.now(timezone.utc)
     await session.commit()
 
     return {"success": True, "message": "Account deleted"}
@@ -535,8 +536,8 @@ async def delete_bank_account(
 @router.put("/accounts/{account_id}/primary")
 async def set_primary_account(
     account_id: str,
-    current_user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_db),
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict:
     """Set a bank account as primary."""
     customer = await get_customer_or_404(current_user, session)
@@ -555,14 +556,14 @@ async def set_primary_account(
     result_all = await session.execute(
         select(ClientBankAccount).where(
             ClientBankAccount.customer_id == customer.id,
-            ClientBankAccount.is_primary == True,
+            ClientBankAccount.is_primary.is_(True),
         )
     )
     for acc in result_all.scalars().all():
         acc.is_primary = False
 
     account.is_primary = True
-    account.updated_at = datetime.utcnow()
+    account.updated_at = datetime.now(timezone.utc)
     await session.commit()
 
     return {"success": True, "message": "Primary account updated"}

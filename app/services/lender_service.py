@@ -6,14 +6,21 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.enums import LenderStatus
-from app.core.exceptions import ConflictException, NotFoundException, ValidationException
+from app.core.enums import LenderStatus, UserRole
+from app.core.exceptions import (
+    ConflictException,
+    NotFoundException,
+    ValidationException,
+)
 from app.models.lender import Lender, LenderInvitation, LenderBankAccount
+from app.models.user import User
 from app.repositories.lender_repo import (
     LenderRepository,
     LenderInvitationRepository,
     LenderBankAccountRepository,
 )
+from app.repositories.user_repo import UserRepository
+from app.services.notifications import NotificationDispatcher
 
 
 class LenderService:
@@ -92,11 +99,25 @@ class LenderService:
         self.session.add(lender)
         await self.session.flush()
 
+        try:
+            user_repo = UserRepository(self.session)
+            platform_admins = await user_repo.get_platform_admins()
+            if platform_admins:
+                dispatcher = NotificationDispatcher(self.session)
+                await dispatcher.notify_lender_registered(
+                    platform_admin_ids=[admin.id for admin in platform_admins],
+                    lender_name=commercial_name or legal_name,
+                )
+        except Exception:
+            pass
+
         return lender
 
     async def activate_lender(self, lender_id: UUID) -> Lender:
         """Activate a lender (change status from PENDING to ACTIVE)."""
-        lender = await self.lender_repo.get_or_404(lender_id, error_code="LENDER_NOT_FOUND")
+        lender = await self.lender_repo.get_or_404(
+            lender_id, error_code="LENDER_NOT_FOUND"
+        )
 
         if lender.status == LenderStatus.ACTIVE:
             raise ValidationException("Lender is already active")
@@ -104,11 +125,28 @@ class LenderService:
         lender.status = LenderStatus.ACTIVE
         await self.session.flush()
 
+        try:
+            user_repo = UserRepository(self.session)
+            owners = await user_repo.get_by_lender_and_role(lender_id, UserRole.OWNER)
+            if owners:
+                dispatcher = NotificationDispatcher(self.session)
+                for owner in owners:
+                    await dispatcher.notify_lender_approved(
+                        lender_owner_user_id=owner.id,
+                        lender_name=lender.commercial_name or lender.legal_name,
+                    )
+        except Exception:
+            pass
+
         return lender
 
-    async def suspend_lender(self, lender_id: UUID, reason: str | None = None) -> Lender:
+    async def suspend_lender(
+        self, lender_id: UUID, reason: str | None = None
+    ) -> Lender:
         """Suspend a lender (change status to SUSPENDED)."""
-        lender = await self.lender_repo.get_or_404(lender_id, error_code="LENDER_NOT_FOUND")
+        lender = await self.lender_repo.get_or_404(
+            lender_id, error_code="LENDER_NOT_FOUND"
+        )
 
         if lender.status == LenderStatus.SUSPENDED:
             raise ValidationException("Lender is already suspended")
@@ -120,13 +158,29 @@ class LenderService:
 
     async def reject_lender(self, lender_id: UUID, reason: str | None = None) -> Lender:
         """Reject a lender application (change status to REJECTED)."""
-        lender = await self.lender_repo.get_or_404(lender_id, error_code="LENDER_NOT_FOUND")
+        lender = await self.lender_repo.get_or_404(
+            lender_id, error_code="LENDER_NOT_FOUND"
+        )
 
         if lender.status == LenderStatus.REJECTED:
             raise ValidationException("Lender is already rejected")
 
         lender.status = LenderStatus.REJECTED
         await self.session.flush()
+
+        try:
+            user_repo = UserRepository(self.session)
+            owners = await user_repo.get_by_lender_and_role(lender_id, UserRole.OWNER)
+            if owners:
+                dispatcher = NotificationDispatcher(self.session)
+                for owner in owners:
+                    await dispatcher.notify_lender_rejected(
+                        lender_owner_user_id=owner.id,
+                        lender_name=lender.commercial_name or lender.legal_name,
+                        reason=reason,
+                    )
+        except Exception:
+            pass
 
         return lender
 
@@ -148,7 +202,9 @@ class LenderService:
             Created LenderInvitation with unique code
         """
         # Verify lender exists
-        lender = await self.lender_repo.get_or_404(lender_id, error_code="LENDER_NOT_FOUND")
+        lender = await self.lender_repo.get_or_404(
+            lender_id, error_code="LENDER_NOT_FOUND"
+        )
 
         # Generate unique code
         code = secrets.token_urlsafe(32)[:20].upper()
@@ -239,7 +295,9 @@ class LenderService:
 
         # If marking as primary, unmark current primary
         if is_primary:
-            current_primary = await self.bank_account_repo.get_primary_by_lender(lender_id)
+            current_primary = await self.bank_account_repo.get_primary_by_lender(
+                lender_id
+            )
             if current_primary:
                 current_primary.is_primary = False
 
@@ -259,7 +317,9 @@ class LenderService:
 
         return account
 
-    async def get_lender_bank_accounts(self, lender_id: UUID) -> list[LenderBankAccount]:
+    async def get_lender_bank_accounts(
+        self, lender_id: UUID
+    ) -> list[LenderBankAccount]:
         """Get all bank accounts for a lender."""
         await self.lender_repo.get_or_404(lender_id, error_code="LENDER_NOT_FOUND")
         return await self.bank_account_repo.get_by_lender(lender_id)
